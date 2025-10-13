@@ -1,0 +1,27 @@
+{
+  "name": "blockchain-dev",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "hardhat": "^2.26.3"
+  },
+  "dependencies": {
+    "@iden3/binfileutils": "^0.0.12",
+    "@openzeppelin/contracts": "^5.4.0",
+    "circomlib": "^2.0.5",
+    "dotenv": "^17.2.3",
+    "ipfs-http-client": "^56.0.3",
+    "keccak256": "^1.0.6",
+    "merkletreejs": "^0.6.0",
+    "snarkjs": "^0.7.5",
+    "stix2": "^1.1.0"
+  }
+}

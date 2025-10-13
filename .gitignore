@@ -1,0 +1,53 @@
+# Node modules
+node_modules/
+cti-frontend/node_modules/
+
+# Build artifacts
+artifacts/
+cache/
+.next/
+cti-frontend/.next/
+cti-frontend/.turbo/
+
+# Environment variables and secrets (CRITICAL - NEVER COMMIT)
+.env
+.env.*
+!.env.example
+cti-frontend/.env
+cti-frontend/.env.*
+!cti-frontend/.env.local.example
+
+# Deployment addresses (safe to commit - only contract addresses)
+# test-addresses.json  # Uncomment if you want to exclude
+
+# Hardhat
+typechain-types/
+coverage/
+coverage.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Local development
+.cache/
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.temp

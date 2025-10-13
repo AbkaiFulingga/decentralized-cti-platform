@@ -1,0 +1,61 @@
+xxxkx// scripts/zkp-utils.js
+const hre = require("hardhat");
+
+class ZKPContributorAuth {
+    /**
+     * Generate a ZKP commitment for anonymous contributors
+     * This proves knowledge of credential without revealing it
+     */
+    static generateCommitment(walletAddress, secretNonce) {
+        // Using keccak256 as placeholder for Poseidon hash
+        // In production, would use circomlib's poseidon
+        const commitment = hre.ethers.keccak256(
+            hre.ethers.solidityPacked(
+                ["address", "uint256"],
+                [walletAddress, secretNonce]
+            )
+        );
+        return commitment;
+    }
+
+    /**
+     * Generate proof of credential ownership
+     * Proves you know the preimage without revealing wallet address
+     */
+    static generateProof(walletAddress, secretNonce, commitment) {
+        // Simplified proof: hash of secret that can be verified
+        // In production, this would be a zk-SNARK proof
+        const proof = hre.ethers.solidityPacked(
+            ["uint256"],
+            [secretNonce]
+        );
+        
+        return {
+            commitment: commitment,
+            proof: proof,
+            nullifier: this.generateNullifier(walletAddress)
+        };
+    }
+
+    /**
+     * Generate nullifier to prevent double-use of credentials
+     */
+    static generateNullifier(walletAddress) {
+        return hre.ethers.keccak256(
+            hre.ethers.solidityPacked(
+                ["address", "string"],
+                [walletAddress, "NULLIFIER"]
+            )
+        );
+    }
+
+    /**
+     * Verify proof off-chain (for testing)
+     */
+    static verifyProof(walletAddress, secretNonce, commitment, proof) {
+        const calculatedCommitment = this.generateCommitment(walletAddress, secretNonce);
+        return calculatedCommitment === commitment;
+    }
+}
+
+module.exports = { ZKPContributorAuth };

@@ -1,0 +1,110 @@
+{
+  "type": "bundle",
+  "id": "bundle--6bf49650-889f-408a-91d4-6262d0f629e7",
+  "objects": [
+    {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--8945ca02-6001-40fd-8618-32feaaac033e",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Security Research Lab",
+      "identity_class": "organization"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--4b2e5f0c-c019-4c7a-a008-d94164fa1767",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Malicious IOC: malicious-apt.com",
+      "description": "APT29 infrastructure indicators",
+      "pattern": "[domain-name:value = 'malicious-apt.com']",
+      "pattern_type": "stix",
+      "valid_from": "2025-10-05T03:50:41.495Z",
+      "labels": [
+        "apt29",
+        "malware",
+        "infrastructure"
+      ],
+      "confidence": 85,
+      "created_by_ref": "identity--91b5309c-7086-45a3-8eb9-69dc8fdfeb0d"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--6b20904d-f7d0-4e7a-9f7a-e85f2f999ef2",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Malicious IOC: 192.168.100.50",
+      "description": "APT29 infrastructure indicators",
+      "pattern": "[ipv4-addr:value = '192.168.100.50']",
+      "pattern_type": "stix",
+      "valid_from": "2025-10-05T03:50:41.495Z",
+      "labels": [
+        "apt29",
+        "malware",
+        "infrastructure"
+      ],
+      "confidence": 85,
+      "created_by_ref": "identity--9b0e4921-4b2a-4457-9256-a40c48763af0"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--976550db-1303-49e5-a5d5-dc519f76f432",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Malicious IOC: a1b2c3d4e5f67890abcdef1234567890",
+      "description": "APT29 infrastructure indicators",
+      "pattern": "[file:hashes.MD5 = 'a1b2c3d4e5f67890abcdef1234567890']",
+      "pattern_type": "stix",
+      "valid_from": "2025-10-05T03:50:41.495Z",
+      "labels": [
+        "apt29",
+        "malware",
+        "infrastructure"
+      ],
+      "confidence": 85,
+      "created_by_ref": "identity--60ff1870-35d9-41d4-ad76-9679f5c6d46a"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--80c6fd58-096b-4a5c-a8e6-519627a067e5",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Malicious IOC: phishing-site.org",
+      "description": "APT29 infrastructure indicators",
+      "pattern": "[domain-name:value = 'phishing-site.org']",
+      "pattern_type": "stix",
+      "valid_from": "2025-10-05T03:50:41.495Z",
+      "labels": [
+        "apt29",
+        "malware",
+        "infrastructure"
+      ],
+      "confidence": 85,
+      "created_by_ref": "identity--8a76a9a2-19e4-485d-b157-59217a005ddd"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--9f6aaed3-19b9-49a1-89bc-711dc5c763fe",
+      "created": "2025-10-05T03:50:41.495Z",
+      "modified": "2025-10-05T03:50:41.495Z",
+      "name": "Malicious IOC: deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef",
+      "description": "APT29 infrastructure indicators",
+      "pattern": "[file:hashes.'SHA-256' = 'deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef']",
+      "pattern_type": "stix",
+      "valid_from": "2025-10-05T03:50:41.495Z",
+      "labels": [
+        "apt29",
+        "malware",
+        "infrastructure"
+      ],
+      "confidence": 85,
+      "created_by_ref": "identity--626bd21a-d68b-4d71-85eb-7aef03a2daad"
+    }
+  ]
+}
