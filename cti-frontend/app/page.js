@@ -1,65 +1,98 @@
 // app/page.js
-import IOCSubmissionForm from '@/components/IOCSubmissionForm';
-import PlatformDashboard from '@/components/PlatformDashboard';
+import Link from 'next/link';
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-black">
-      {/* Animated background effects */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500 rounded-full mix-blend-multiply filter blur-3xl opacity-20 animate-pulse delay-700"></div>
-      </div>
-
-      <div className="relative container mx-auto py-12 px-4">
-        {/* Header Section */}
-        <div className="text-center mb-12">
-          <div className="inline-block mb-4">
-            <span className="px-4 py-2 rounded-full bg-purple-500/20 border border-purple-500/30 text-purple-300 text-sm font-semibold backdrop-blur-sm">
-              🔐 Decentralized CTI Platform
-            </span>
-          </div>
-          
-          <h1 className="text-6xl font-bold bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-4">
-            Privacy-Preserving
+    <main className="min-h-screen bg-gradient-to-br from-[#1a0b2e] via-purple-900/20 to-black">
+      {/* Hero Section */}
+      <div className="max-w-6xl mx-auto px-8 py-20">
+        <div className="text-center mb-16">
+          <h1 className="text-6xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-blue-400 mb-6">
+            Decentralized CTI Platform
           </h1>
-          <h2 className="text-4xl font-bold text-white mb-6">
-            Cyber Threat Intelligence
-          </h2>
-          
-          <p className="text-gray-400 text-lg max-w-2xl mx-auto">
-            Submit and verify IOCs with 256-bit cryptographic security on a decentralized blockchain network
+          <p className="text-gray-300 text-xl mb-8 max-w-3xl mx-auto">
+            Privacy-preserving threat intelligence sharing on Ethereum Layer 2.
+            Submit, verify, and govern IOCs with 256-bit cryptographic security.
           </p>
-
-          {/* Stats Bar */}
-          <div className="flex justify-center gap-8 mt-8">
-            <div className="text-center">
-              <div className="text-3xl font-bold text-blue-400">256-bit</div>
-              <div className="text-sm text-gray-500">Security</div>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-purple-400">STIX 2.1</div>
-              <div className="text-sm text-gray-500">Compatible</div>
-            </div>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-pink-400">IPFS</div>
-              <div className="text-sm text-gray-500">Distributed</div>
-            </div>
+          
+          <div className="flex gap-4 justify-center">
+            <Link 
+              href="/submit"
+              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              Submit IOCs →
+            </Link>
+            <Link 
+              href="/dashboard"
+              className="px-8 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-sm text-white font-semibold rounded-xl transition-all border border-white/20"
+            >
+              View Dashboard
+            </Link>
           </div>
         </div>
 
-        {/* Platform Dashboard */}
-        <PlatformDashboard />
+        {/* Feature Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-16">
+          <Link href="/submit" className="group">
+            <div className="bg-purple-900/30 backdrop-blur-xl rounded-2xl p-8 border border-purple-700/50 hover:border-purple-600 transition-all">
+              <div className="text-4xl mb-4">🚀</div>
+              <h3 className="text-xl font-bold text-white mb-2">Submit IOCs</h3>
+              <p className="text-gray-400 text-sm">
+                Upload threat indicators with IPFS storage and Merkle proof verification
+              </p>
+              <div className="mt-4 text-purple-400 text-sm group-hover:translate-x-2 transition-transform">
+                Get started →
+              </div>
+            </div>
+          </Link>
 
-        {/* Main Form */}
-        <IOCSubmissionForm />
+          <Link href="/verify" className="group">
+            <div className="bg-blue-900/30 backdrop-blur-xl rounded-2xl p-8 border border-blue-700/50 hover:border-blue-600 transition-all">
+              <div className="text-4xl mb-4">🔍</div>
+              <h3 className="text-xl font-bold text-white mb-2">Verify IOCs</h3>
+              <p className="text-gray-400 text-sm">
+                Cryptographically verify IOC authenticity using Merkle proofs
+              </p>
+              <div className="mt-4 text-blue-400 text-sm group-hover:translate-x-2 transition-transform">
+                Verify now →
+              </div>
+            </div>
+          </Link>
 
-        {/* Footer Info */}
-        <div className="mt-16 text-center">
-          <div className="inline-block px-6 py-3 bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700">
-            <p className="text-gray-400 text-sm">
-              🔗 Connected to <span className="text-purple-400 font-mono">Localhost Network</span>
-            </p>
+          <Link href="/batches" className="group">
+            <div className="bg-pink-900/30 backdrop-blur-xl rounded-2xl p-8 border border-pink-700/50 hover:border-pink-600 transition-all">
+              <div className="text-4xl mb-4">📚</div>
+              <h3 className="text-xl font-bold text-white mb-2">Browse Batches</h3>
+              <p className="text-gray-400 text-sm">
+                Search and explore all submitted IOC batches with filtering
+              </p>
+              <div className="mt-4 text-pink-400 text-sm group-hover:translate-x-2 transition-transform">
+                Browse →
+              </div>
+            </div>
+          </Link>
+        </div>
+
+        {/* Key Features */}
+        <div className="bg-gray-900/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50">
+          <h2 className="text-2xl font-bold text-white mb-6 text-center">Platform Features</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
+            <div>
+              <div className="text-3xl mb-2">🔐</div>
+              <div className="text-sm text-gray-300 font-semibold">256-bit Security</div>
+            </div>
+            <div>
+              <div className="text-3xl mb-2">⚡</div>
+              <div className="text-sm text-gray-300 font-semibold">99.5% Gas Savings</div>
+            </div>
+            <div>
+              <div className="text-3xl mb-2">🌐</div>
+              <div className="text-sm text-gray-300 font-semibold">IPFS Storage</div>
+            </div>
+            <div>
+              <div className="text-3xl mb-2">🛡️</div>
+              <div className="text-sm text-gray-300 font-semibold">Threshold Governance</div>
+            </div>
           </div>
         </div>
       </div>

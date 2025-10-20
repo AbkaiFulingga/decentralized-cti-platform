@@ -5,7 +5,6 @@ import { useState } from 'react';
 import { ethers } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
-import GasCostEstimator from './GasCostEstimator';
 
 export default function IOCSubmissionForm() {
   const [iocs, setIocs] = useState('');
@@ -15,7 +14,6 @@ export default function IOCSubmissionForm() {
   const [loading, setLoading] = useState(false);
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
-  const [isRegistered, setIsRegistered] = useState(false);
 
   const connectWallet = async () => {
     try {
@@ -28,27 +26,8 @@ export default function IOCSubmissionForm() {
       setWalletAddress(accounts[0]);
       setWalletConnected(true);
       setStatus('✅ Wallet connected');
-
-      // Check registration status
-      await checkRegistrationStatus(accounts[0]);
     } catch (error) {
       setStatus('❌ Failed to connect wallet');
-    }
-  };
-
-  const checkRegistrationStatus = async (address) => {
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
-      const registryABI = [
-        "function contributors(address) external view returns (uint256, uint256, uint256, uint256, bool, uint256)"
-      ];
-
-      const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      const contributor = await registry.contributors(address);
-      setIsRegistered(contributor[4]); // isActive field
-    } catch (error) {
-      console.error('Registration check error:', error);
     }
   };
 
@@ -126,16 +105,15 @@ export default function IOCSubmissionForm() {
       const registry = new ethers.Contract(registryAddress, registryABI, signer);
 
       const contributor = await registry.contributors(await signer.getAddress());
-      const currentIsRegistered = contributor[4];
+      const isRegistered = contributor[4];
 
-      if (!currentIsRegistered) {
+      if (!isRegistered) {
         setStatus('🔐 Registering as contributor (0.05 ETH stake)...');
         const regTx = await registry.registerContributor({ 
           value: ethers.parseEther("0.05") 
         });
         await regTx.wait();
         setStatus('✅ Contributor registered');
-        setIsRegistered(true);
       }
 
       const tx = await registry.addBatch(
@@ -160,10 +138,6 @@ export default function IOCSubmissionForm() {
       setLoading(false);
     }
   };
-
-  // Calculate IOC count for gas estimator
-  const iocArray = iocs.split('\n').map(line => line.trim()).filter(line => line !== '');
-  const iocCount = iocArray.length;
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -271,14 +245,6 @@ export default function IOCSubmissionForm() {
                   <div className="text-xs text-gray-500 mt-1">Decentralized Approval</div>
                 </div>
               </div>
-
-              {/* GAS COST ESTIMATOR - INTEGRATED HERE */}
-              {iocCount > 0 && (
-                <GasCostEstimator 
-                  operation={!isRegistered ? "registerContributor" : "addBatch"} 
-                  iocCount={iocCount}
-                />
-              )}
 
               <button
                 type="submit"
