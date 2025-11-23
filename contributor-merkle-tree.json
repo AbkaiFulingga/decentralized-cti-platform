@@ -1,0 +1,17 @@
+{
+  "root": "0xca3f375f2781ea9580207b753d11dca88dd7b7e23f299f6aeeba337c8b8a74ba",
+  "leaves": [
+    "0xca3f375f2781ea9580207b753d11dca88dd7b7e23f299f6aeeba337c8b8a74ba"
+  ],
+  "contributors": [
+    "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82"
+  ],
+  "contributorCount": 1,
+  "treeDepth": 0,
+  "timestamp": 1763863205533,
+  "lastUpdate": "2025-11-23T02:00:05.533Z",
+  "network": "arbitrumSepolia",
+  "merkleZKAddress": "0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1",
+  "transactionHash": "0xef0a867989c85631dc97a8c75b949326f146798a2dd24f347bad604b27e404d4",
+  "blockNumber": 217996192
+}

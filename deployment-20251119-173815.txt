@@ -1,0 +1,17 @@
+[dotenv@17.2.3] injecting env (27) from .env -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  override existing env vars with { override: true }
+🚀 Starting deployment to Arbitrum Sepolia
+Deployer: 0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82
+Balance: 0.2948340386000952 ETH
+
+📜 Deploying PrivacyPreservingRegistry...
+✅ Registry deployed to: 0x5a24Df56a154f4c409F52e7d3CE74d004E6F9472
+
+📜 Deploying ThresholdGovernance...
+✅ Governance deployed to: 0xcFC55222c53Af2c45109b05698395361CD4FfDcf
+
+📜 Deploying StorageContribution...
+❌ Deployment failed: Error: incorrect number of arguments to constructor
+    at ContractFactory.getDeployTransaction (/home/sc/blockchain-dev/node_modules/ethers/src.ts/contract/factory.ts:87:19)
+    at ContractFactory.deploy (/home/sc/blockchain-dev/node_modules/ethers/src.ts/contract/factory.ts:105:31)
+    at main (/home/sc/blockchain-dev/scripts/deploy.js:48:45)

@@ -1,13 +1,10 @@
 // app/dashboard/page.js
-import PlatformDashboard from '../../components/PlatformDashboard';
+import ContributorDashboard from '../../components/ContributorDashboard';
 
 export default function DashboardPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-br from-[#1a0b2e] via-purple-900/20 to-black p-8">
-      <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold text-white mb-8">Platform Statistics</h1>
-        <PlatformDashboard />
-      </div>
+    <main className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900 py-12 px-4">
+      <ContributorDashboard />
     </main>
   );
 }

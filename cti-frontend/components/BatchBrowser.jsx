@@ -3,442 +3,554 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { NETWORKS } from '../utils/constants';
 
 export default function BatchBrowser() {
   const [batches, setBatches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all'); // all, pending, approved
-  const [privacyFilter, setPrivacyFilter] = useState('all'); // all, public, anonymous
-  const [expandedBatch, setExpandedBatch] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-
-  const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [expandedBatch, setExpandedBatch] = useState(null);
+  const [viewMode, setViewMode] = useState('all');
+  const [l1Batches, setL1Batches] = useState([]);
+  const [l2Batches, setL2Batches] = useState([]);
+  const [loadingL1, setLoadingL1] = useState(false);
+  const [loadingL2, setLoadingL2] = useState(false);
 
   useEffect(() => {
-    loadBatches();
-    const interval = setInterval(loadBatches, 15000); // Refresh every 15 seconds
-    return () => clearInterval(interval);
+    if (typeof window !== 'undefined' && window.ethereum) {
+      checkConnection();
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+      
+      return () => {
+        if (window.ethereum.removeListener) {
+          window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+          window.ethereum.removeListener('chainChanged', handleChainChanged);
+        }
+      };
+    }
   }, []);
 
-  const loadBatches = async () => {
+  useEffect(() => {
+    if (walletConnected) {
+      loadAllBatches();
+    }
+  }, [walletConnected]);
+
+  useEffect(() => {
+    if (viewMode === 'all') {
+      setBatches([...l1Batches, ...l2Batches].sort((a, b) => b.timestampRaw - a.timestampRaw));
+    } else if (viewMode === 'sepolia') {
+      setBatches(l1Batches);
+    } else if (viewMode === 'arbitrum') {
+      setBatches(l2Batches);
+    }
+  }, [viewMode, l1Batches, l2Batches]);
+
+  const checkConnection = async () => {
+    if (window.ethereum) {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const accounts = await provider.listAccounts();
+        
+        if (accounts.length > 0) {
+          setWalletAddress(accounts[0].address);
+          setWalletConnected(true);
+        }
+      } catch (error) {
+        console.error('Connection check failed:', error);
+      }
+    }
+  };
+
+  const handleAccountsChanged = async (accounts) => {
+    if (accounts.length === 0) {
+      setWalletConnected(false);
+      setWalletAddress('');
+      setBatches([]);
+      setL1Batches([]);
+      setL2Batches([]);
+    } else {
+      setWalletAddress(accounts[0]);
+      setWalletConnected(true);
+      loadAllBatches();
+    }
+  };
+
+  const handleChainChanged = () => {
+    window.location.reload();
+  };
+
+  const connectWallet = async () => {
     try {
       if (!window.ethereum) {
-        setError('Please install MetaMask to browse batches');
-        setLoading(false);
+        setError('Please install MetaMask');
         return;
       }
 
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
+      setWalletAddress(accounts[0]);
+      setWalletConnected(true);
       
-      // Check network
-      const network = await provider.getNetwork();
-      if (network.chainId.toString() !== "11155111") {
-        setError('Please switch to Ethereum Sepolia testnet');
-        setLoading(false);
-        return;
-      }
-      
-      const registryABI = [
-        "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string, bytes32, uint256, bool, bytes32, bool, uint256, uint256)"
-      ];
-
-      const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      const batchCount = await registry.getBatchCount();
-
-      const batchArray = [];
-      for (let i = 0; i < Number(batchCount); i++) {
-        const batch = await registry.getBatch(i);
-        
-        // Fetch IOC count from IPFS
-        let iocCount = 0;
-        try {
-          const response = await fetch(`https://gateway.pinata.cloud/ipfs/${batch[0]}`);
-          const iocData = await response.json();
-          iocCount = iocData.iocs?.length || iocData.flatIOCs?.length || 0;
-        } catch (err) {
-          console.error(`Failed to fetch IOC count for batch ${i}:`, err);
-        }
-        
-        batchArray.push({
-          index: i,
-          cid: batch[0],
-          merkleRoot: batch[1],
-          timestamp: Number(batch[2]),
-          accepted: batch[3],
-          contributorHash: batch[4],
-          isPublic: batch[5],
-          confirmations: Number(batch[6]),
-          falsePositives: Number(batch[7]),
-          iocCount: iocCount,
-          contributor: batch[5] ? ethers.getAddress('0x' + batch[4].slice(26)) : 'Anonymous'
-        });
-      }
-      
-      batchArray.reverse(); // Newest first
-      setBatches(batchArray);
-      setLoading(false);
-      setError('');
     } catch (error) {
-      console.error('Error loading batches:', error);
-      setError(`Failed to load batches: ${error.message}`);
-      setLoading(false);
+      setError('Failed to connect wallet');
     }
   };
 
-  const searchIOCAcrossAllBatches = async () => {
-    if (!searchQuery.trim()) {
-      alert('Please enter an IOC to search');
-      return;
-    }
-
-    setSearching(true);
-    setSearchResults([]);
-
+  const loadBatchesFromNetwork = async (network, setNetworkBatches, setNetworkLoading) => {
+    setNetworkLoading(true);
+    
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
+      const provider = new ethers.JsonRpcProvider(network.rpcUrl);
+      
+      const registryAddress = network.contracts.registry;
+      
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string, bytes32, uint256, bool, bytes32, bool, uint256, uint256)"
+        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
       ];
-
+      
       const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      const batchCount = await registry.getBatchCount();
-
-      const results = [];
-      const searchLower = searchQuery.toLowerCase().trim();
-
-      // Search through all batches
-      for (let i = 0; i < Number(batchCount); i++) {
+      
+      console.log(`Querying ${network.name} at ${registryAddress}...`);
+      const count = await registry.getBatchCount();
+      
+      console.log(`Loading ${count} batches from ${network.name}...`);
+      
+      const batchesData = [];
+      
+      for (let i = 0; i < count; i++) {
         try {
           const batch = await registry.getBatch(i);
-          const cid = batch[0];
-
-          // Fetch IOC data from IPFS
-          const response = await fetch(`https://gateway.pinata.cloud/ipfs/${cid}`, {
-            signal: AbortSignal.timeout(5000) // 5 second timeout per batch
-          });
-          const iocData = await response.json();
-
-          // Search through IOCs (case-insensitive)
-          const iocs = iocData.iocs || iocData.flatIOCs || [];
-          const matchingIOCs = iocs.filter(ioc => 
-            ioc.toLowerCase().includes(searchLower)
-          );
-
-          if (matchingIOCs.length > 0) {
-            results.push({
-              batchIndex: i,
-              cid: cid,
-              timestamp: Number(batch[2]),
-              accepted: batch[3],
+          
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+          const result = await response.json();
+          
+          const timestampRaw = Number(batch[2]);
+          
+          if (result.success) {
+            batchesData.push({
+              id: i,
+              network: network.name,
+              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+              chainId: network.chainId,
+              cid: batch[0],                    // string cid
+              merkleRoot: batch[1],             // bytes32 merkleRoot
+              timestamp: new Date(timestampRaw * 1000).toLocaleString(),
+              timestampRaw: timestampRaw,       // uint256 timestamp
+              approved: batch[3],               // bool accepted
+              contributorHash: batch[4],        // bytes32 contributorHash
+              isPublic: batch[5],               // bool isPublic
+              voteCount: Number(batch[6]),      // uint256 confirmations
+              falsePositives: Number(batch[7]), // uint256 falsePositives
+              iocCount: result.data.iocs.length,
+              iocData: result.data,
+              gateway: result.gateway,
+              explorerUrl: network.explorerUrl,
+              registryAddress: registryAddress
+            });
+          } else {
+            batchesData.push({
+              id: i,
+              network: network.name,
+              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+              chainId: network.chainId,
+              cid: batch[0],
+              merkleRoot: batch[1],
+              timestamp: new Date(timestampRaw * 1000).toLocaleString(),
+              timestampRaw: timestampRaw,
+              approved: batch[3],
               isPublic: batch[5],
-              matchingIOCs: matchingIOCs
+              voteCount: Number(batch[6]),
+              falsePositives: Number(batch[7]),
+              iocCount: 0,
+              iocData: null,
+              error: 'IPFS data unavailable',
+              explorerUrl: network.explorerUrl,
+              registryAddress: registryAddress
             });
           }
-        } catch (err) {
-          console.error(`Failed to search batch ${i}:`, err);
-          // Continue searching other batches
+          
+          console.log(`✅ Loaded ${network.name} batch ${i}/${count}`);
+        } catch (error) {
+          console.error(`Error loading batch ${i} from ${network.name}:`, error.message);
         }
       }
-
-      setSearchResults(results);
-
-      if (results.length === 0) {
-        alert(`No results found for "${searchQuery}"`);
-      }
-
+      
+      setNetworkBatches(batchesData);
+      console.log(`✅ Loaded ${batchesData.length} batches from ${network.name}`);
+      
     } catch (error) {
-      console.error('Search error:', error);
-      alert(`Search failed: ${error.message}`);
+      console.error(`Error loading batches from ${network.name}:`, error);
+      setError(`Failed to load from ${network.name}: ${error.message}`);
     } finally {
-      setSearching(false);
+      setNetworkLoading(false);
     }
   };
 
-  const filteredBatches = batches.filter(batch => {
-    if (filter === 'pending' && batch.accepted) return false;
-    if (filter === 'approved' && !batch.accepted) return false;
-    if (privacyFilter === 'public' && !batch.isPublic) return false;
-    if (privacyFilter === 'anonymous' && batch.isPublic) return false;
-    return true;
-  });
-
-  const toggleExpand = (index) => {
-    setExpandedBatch(expandedBatch === index ? null : index);
+  const loadAllBatches = async () => {
+    setError('');
+    
+    await Promise.all([
+      loadBatchesFromNetwork(NETWORKS.sepolia, setL1Batches, setLoadingL1),
+      loadBatchesFromNetwork(NETWORKS.arbitrumSepolia, setL2Batches, setLoadingL2)
+    ]);
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-6xl mx-auto mt-12">
-        <div className="bg-purple-900/30 backdrop-blur-xl rounded-2xl p-8 border border-purple-700/50">
-          <div className="flex items-center justify-center gap-3 text-gray-400">
-            <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
-            <p>Loading batches...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const toggleBatchExpansion = (batchKey) => {
+    setExpandedBatch(expandedBatch === batchKey ? null : batchKey);
+  };
 
-  if (error) {
-    return (
-      <div className="max-w-6xl mx-auto mt-12">
-        <div className="bg-red-500/10 backdrop-blur-xl rounded-2xl p-6 border border-red-500/30">
-          <p className="text-red-300">⚠️ {error}</p>
-        </div>
-      </div>
-    );
-  }
+  const isLoading = loadingL1 || loadingL2;
 
   return (
-    <div className="max-w-6xl mx-auto mt-12">
-      <div className="bg-purple-900/30 backdrop-blur-xl rounded-2xl p-8 border border-purple-700/50">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2 mb-6">
-          <span>📚</span> Browse IOC Batches
-        </h2>
+    <div className="max-w-7xl mx-auto">
+      <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
+        
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-3xl font-bold text-white mb-2">📊 Browse IOC Batches</h2>
+            <p className="text-gray-400">Cross-chain threat intelligence from L1 and L2</p>
+          </div>
+        </div>
 
-        {/* Search Section */}
-        <div className="mb-6 p-6 bg-purple-950/50 rounded-xl border border-purple-700/50">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <span>🔍</span> Search for Specific IOC
-          </h3>
-          
-          <div className="flex gap-3">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Enter IOC to search (e.g., malicious.com, 192.168.1.1)"
-              className="flex-1 px-4 py-3 bg-purple-900/70 border border-purple-600/50 rounded-lg text-gray-100 placeholder-gray-500 focus:ring-2 focus:ring-purple-500"
-              disabled={searching}
-            />
+        {!walletConnected ? (
+          <div className="text-center py-12">
+            <div className="mb-6">
+              <div className="w-20 h-20 mx-auto bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center mb-4">
+                <span className="text-4xl">🔐</span>
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">Connect Your Wallet</h3>
+              <p className="text-gray-400">Connect MetaMask to browse IOC batches from both networks</p>
+            </div>
             
             <button
-              onClick={searchIOCAcrossAllBatches}
-              disabled={searching}
-              className={`px-6 py-3 rounded-lg font-semibold transition-all ${
-                searching
-                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                  : 'bg-purple-600 hover:bg-purple-700 text-white'
-              }`}
+              onClick={connectWallet}
+              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-xl transition-all transform hover:scale-105 shadow-lg"
             >
-              {searching ? '⏳ Searching...' : '🔍 Search All Batches'}
+              Connect MetaMask Wallet
             </button>
           </div>
+        ) : (
+          <>
+            <div className="mb-6 p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+              <div className="flex justify-between items-center mb-4">
+                <div>
+                  <span className="text-gray-400 text-sm">Connected Wallet</span>
+                  <p className="text-purple-400 font-mono text-sm">
+                    {walletAddress.substring(0, 6)}...{walletAddress.substring(38)}
+                  </p>
+                </div>
+                
+                <button
+                  onClick={loadAllBatches}
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? '🔄 Loading...' : '🔄 Refresh All'}
+                </button>
+              </div>
 
-          {/* Search Results */}
-          {searchResults.length > 0 && (
-            <div className="mt-6 space-y-3">
-              <h4 className="text-sm font-semibold text-gray-400">
-                Found in {searchResults.length} batch(es):
-              </h4>
-              
-              {searchResults.map((result) => (
-                <div key={result.batchIndex} className="bg-purple-900/30 rounded-lg p-4 border border-purple-700/50">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <span className="text-white font-bold">Batch #{result.batchIndex}</span>
-                      <span className="ml-3 text-gray-400 text-sm">
-                        {new Date(result.timestamp * 1000).toLocaleString()}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setViewMode('all')}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    viewMode === 'all'
+                      ? 'bg-gradient-to-r from-blue-500 to-purple-500 text-white border border-purple-500/50'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                  }`}
+                >
+                  🌍 All Networks ({l1Batches.length + l2Batches.length})
+                </button>
+                
+                <button
+                  onClick={() => setViewMode('sepolia')}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    viewMode === 'sepolia'
+                      ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                  }`}
+                >
+                  🌐 Ethereum L1 ({l1Batches.length})
+                </button>
+                
+                <button
+                  onClick={() => setViewMode('arbitrum')}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    viewMode === 'arbitrum'
+                      ? 'bg-purple-500/30 text-purple-300 border border-purple-500/30'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                  }`}
+                >
+                  ⚡ Arbitrum L2 ({l2Batches.length})
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300">
+                ❌ {error}
+              </div>
+            )}
+
+            {isLoading && (
+              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <div className="w-5 h-5 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                  <div className="flex-1">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-blue-300 text-sm font-semibold">
+                        {loadingL1 && loadingL2 ? 'Loading from both networks...' : 
+                         loadingL1 ? 'Loading Ethereum Sepolia...' : 
+                         loadingL2 ? 'Loading Arbitrum Sepolia...' : 'Loading...'}
+                      </span>
+                      <span className="text-blue-400 text-xs">
+                        L1: {l1Batches.length} | L2: {l2Batches.length}
                       </span>
                     </div>
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      result.accepted
-                        ? 'bg-green-500/20 text-green-300 border border-green-500/30'
-                        : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                    }`}>
-                      {result.accepted ? '✅ Approved' : '⏳ Pending'}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-sm text-gray-400">Matching IOCs:</p>
-                    {result.matchingIOCs.map((ioc, idx) => (
-                      <div key={idx} className="bg-purple-950/50 rounded px-3 py-2 font-mono text-sm text-purple-300">
-                        {ioc}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="mt-3 flex gap-2">
-                    <a
-                      href={`https://gateway.pinata.cloud/ipfs/${result.cid}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm"
-                    >
-                      📁 View on IPFS
-                    </a>
-                    <button
-                      onClick={() => {
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                        alert(`Use IOC Verification with Batch #${result.batchIndex}`);
-                      }}
-                      className="px-4 py-2 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-purple-300 text-sm"
-                    >
-                      🔍 Verify This IOC
-                    </button>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                      <div 
+                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, ((l1Batches.length + l2Batches.length) / 10) * 100)}%` }}
+                      ></div>
+                    </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Filters */}
-        <div className="flex gap-4 mb-6 flex-wrap">
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="px-4 py-2 bg-purple-950/70 border border-purple-600/50 rounded-lg text-gray-100 text-sm focus:ring-2 focus:ring-purple-500"
-          >
-            <option value="all">All Batches</option>
-            <option value="pending">⏳ Pending Only</option>
-            <option value="approved">✅ Approved Only</option>
-          </select>
-
-          <select
-            value={privacyFilter}
-            onChange={(e) => setPrivacyFilter(e.target.value)}
-            className="px-4 py-2 bg-purple-950/70 border border-purple-600/50 rounded-lg text-gray-100 text-sm focus:ring-2 focus:ring-purple-500"
-          >
-            <option value="all">All Privacy Modes</option>
-            <option value="public">🌐 Public Only</option>
-            <option value="anonymous">👤 Anonymous Only</option>
-          </select>
-
-          <div className="flex-1 text-right">
-            <span className="text-gray-400 text-sm">
-              Total: <span className="text-purple-400 font-bold">{filteredBatches.length}</span> batches
-            </span>
-          </div>
-        </div>
-
-        {filteredBatches.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="text-6xl mb-4">📭</div>
-            <p className="text-gray-400 text-lg">No batches found matching filters</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredBatches.map((batch) => (
-              <div
-                key={batch.index}
-                className="bg-purple-950/50 rounded-xl p-5 border border-purple-700/50 hover:border-purple-600/70 transition-all"
-              >
-                {/* Batch Header */}
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className="text-3xl">
-                      {batch.accepted ? '✅' : '⏳'}
-                    </div>
-                    <div>
-                      <h3 className="text-white font-bold text-lg">
-                        Batch #{batch.index}
-                      </h3>
-                      <p className="text-gray-400 text-sm">
-                        {new Date(batch.timestamp * 1000).toLocaleString()}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="flex gap-2">
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      batch.accepted
-                        ? 'bg-green-500/20 text-green-300 border border-green-500/30'
-                        : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                    }`}>
-                      {batch.accepted ? 'Approved' : 'Pending'}
-                    </span>
-                    
-                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      batch.isPublic
-                        ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                        : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                    }`}>
-                      {batch.isPublic ? '🌐 Public' : '👤 Anonymous'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Batch Metadata */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-4">
-                  <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                    <p className="text-gray-400 text-xs mb-1">IOC Count</p>
-                    <p className="text-purple-300 font-bold">{batch.iocCount}</p>
-                  </div>
-
-                  <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                    <p className="text-gray-400 text-xs mb-1">CID</p>
-                    <p className="text-blue-400 font-mono text-xs truncate">{batch.cid}</p>
-                  </div>
-
-                  {batch.isPublic && (
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">Contributor</p>
-                      <p className="text-green-400 font-mono text-xs truncate">
-                        {batch.contributor.substring(0, 10)}...
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => toggleExpand(batch.index)}
-                    className="flex-1 text-center py-2 px-4 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-purple-300 text-sm transition-all"
-                  >
-                    {expandedBatch === batch.index ? '▲ Hide Details' : '▼ View Details'}
-                  </button>
-                  
-                  <a
-                    href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 text-center py-2 px-4 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm transition-all"
-                  >
-                    📁 View on IPFS
-                  </a>
-                  
-                  <a
-                    href={`https://sepolia.etherscan.io/address/${registryAddress}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 text-center py-2 px-4 bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/30 rounded-lg text-pink-300 text-sm transition-all"
-                  >
-                    🔗 View on Etherscan
-                  </a>
-                </div>
-
-                {/* Expanded Details */}
-                {expandedBatch === batch.index && (
-                  <div className="mt-4 pt-4 border-t border-purple-700/50 space-y-3">
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">Full CID</p>
-                      <p className="text-blue-400 text-xs break-all font-mono">{batch.cid}</p>
-                    </div>
-                    
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">Merkle Root</p>
-                      <p className="text-purple-400 text-xs break-all font-mono">{batch.merkleRoot}</p>
-                    </div>
-
-                    {!batch.isPublic && (
-                      <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                        <p className="text-gray-400 text-xs mb-1">Contributor Hash (256-bit)</p>
-                        <p className="text-pink-400 text-xs break-all font-mono">{batch.contributorHash}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
-            ))}
-          </div>
+            )}
+
+            {!isLoading && batches.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">📭</div>
+                <p className="text-gray-400 text-lg">No batches found on any network</p>
+                <p className="text-gray-500 text-sm mt-2">Be the first to submit threat intelligence!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {batches.map((batch) => {
+                  const batchKey = `${batch.network}-${batch.id}`;
+                  
+                  return (
+                    <div
+                      key={batchKey}
+                      className="bg-gray-900/50 border border-gray-700 rounded-xl overflow-hidden hover:border-purple-500/50 transition-all"
+                    >
+                      <div
+                        className="p-6 cursor-pointer"
+                        onClick={() => toggleBatchExpansion(batchKey)}
+                      >
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                              batch.approved ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                            }`}>
+                              {batch.approved ? '✅' : '⏳'}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h3 className="text-xl font-bold text-white">Batch #{batch.id}</h3>
+                                <span className={`text-lg ${batch.networkIcon === '🌐' ? 'text-blue-400' : 'text-purple-400'}`}>
+                                  {batch.networkIcon}
+                                </span>
+                                <span className={`text-xs px-2 py-1 rounded font-semibold ${
+                                  batch.networkIcon === '🌐' 
+                                    ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' 
+                                    : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                                }`}>
+                                  {batch.network.includes('Ethereum') ? 'Ethereum L1' : 'Arbitrum L2'}
+                                </span>
+                              </div>
+                              <p className="text-gray-400 text-sm">
+                                {batch.iocCount || '?'} IOCs • {batch.timestamp}
+                              </p>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              batch.approved 
+                                ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                                : 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30'
+                            }`}>
+                              {batch.approved ? 'Approved' : 'Pending'}
+                            </div>
+                            
+                            <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                              batch.isPublic
+                                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                : 'bg-purple-500/20 text-purple-400 border border-purple-500/30'
+                            }`}>
+                              {batch.isPublic ? '🌐 Public' : '🔒 Private'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500">Contributor Hash:</span>
+                            <p className="text-purple-400 font-mono">
+                              {batch.contributorHash.substring(0, 10)}...{batch.contributorHash.substring(58)}
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <span className="text-gray-500">IPFS CID:</span>
+                            <p className="text-blue-400 font-mono break-all">
+                              {batch.cid.substring(0, 20)}...
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <span className="text-gray-500">Merkle Root:</span>
+                            <p className="text-green-400 font-mono">
+                              {batch.merkleRoot.substring(0, 10)}...{batch.merkleRoot.substring(58)}
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <span className="text-gray-500">Community Confirmations:</span>
+                            <p className="text-yellow-400 font-semibold">
+                              {batch.voteCount} confirmations • {batch.falsePositives} disputes
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between">
+                          <button className="text-purple-400 hover:text-purple-300 text-sm font-semibold">
+                            {expandedBatch === batchKey ? '▼ Hide Details' : '▶ Show Details'}
+                          </button>
+                          
+                          {batch.gateway && (
+                            <span className="text-xs text-gray-500">
+                              Via {batch.gateway.includes('pinata') ? 'Pinata' : batch.gateway.includes('cloudflare') ? 'Cloudflare' : 'IPFS'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {expandedBatch === batchKey && batch.iocData && (
+                        <div className="border-t border-gray-700 p-6 bg-gray-950/50">
+                          <h4 className="text-lg font-bold text-white mb-4">📋 IOC Details</h4>
+                          
+                          <div className="mb-4 p-4 bg-gray-900/70 rounded-lg">
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-gray-500">Format:</span>
+                                <p className="text-white font-semibold">{batch.iocData.format}</p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Source:</span>
+                                <p className="text-purple-400 font-mono text-xs">
+                                  {batch.iocData.metadata?.source?.substring(0, 10)}...
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Privacy Mode:</span>
+                                <p className="text-purple-400 font-semibold">
+                                  {batch.isPublic ? 'Public Identity' : 'Anonymous (ZKP)'}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-gray-500">Quality Score:</span>
+                                <p className="text-green-400 font-semibold">
+                                  {batch.voteCount > 0 ? `${Math.round((batch.voteCount / (batch.voteCount + batch.falsePositives)) * 100)}%` : 'N/A'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="max-h-96 overflow-y-auto bg-gray-900/70 rounded-lg p-4">
+                            <div className="font-mono text-sm space-y-1">
+                              {batch.iocData.iocs?.map((ioc, idx) => (
+                                <div key={idx} className="text-gray-300 hover:text-white hover:bg-gray-800/50 p-2 rounded transition-all">
+                                  <span className="text-gray-500 mr-3">{idx + 1}.</span>
+                                  {ioc}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 flex gap-3">
+                            <a
+                              href={`${batch.explorerUrl}/address/${batch.registryAddress}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all"
+                            >
+                              🔗 View on {batch.network.includes('Ethereum') ? 'Etherscan' : 'Arbiscan'}
+                            </a>
+                            
+                            <a
+                              href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
+                            >
+                              📦 View on IPFS
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {expandedBatch === batchKey && batch.error && (
+                        <div className="border-t border-gray-700 p-6 bg-red-500/5">
+                          <p className="text-red-400 text-sm">⚠️ {batch.error}</p>
+                          <p className="text-gray-500 text-xs mt-2">
+                            IPFS data temporarily unavailable. Try refreshing.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="mt-8 p-6 bg-gray-900/30 rounded-xl border border-gray-700">
+              <h3 className="font-bold text-white mb-4">📊 Cross-Chain Statistics</h3>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                <div>
+                  <div className="text-3xl font-bold text-purple-400">{l1Batches.length + l2Batches.length}</div>
+                  <div className="text-sm text-gray-400">Total Batches</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-blue-400">{l1Batches.length}</div>
+                  <div className="text-sm text-gray-400">L1 (Sepolia)</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-purple-400">{l2Batches.length}</div>
+                  <div className="text-sm text-gray-400">L2 (Arbitrum)</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-green-400">
+                    {[...l1Batches, ...l2Batches].filter(b => b.approved).length}
+                  </div>
+                  <div className="text-sm text-gray-400">Approved</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-yellow-400">
+                    {[...l1Batches, ...l2Batches].reduce((sum, b) => sum + (b.iocCount || 0), 0)}
+                  </div>
+                  <div className="text-sm text-gray-400">Total IOCs</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+              <div className="flex items-start gap-3">
+                <span className="text-blue-400 text-xl">ℹ️</span>
+                <div className="text-sm text-gray-400">
+                  <p className="font-semibold text-blue-300 mb-1">Cross-Chain Privacy-Preserving Registry</p>
+                  <p>This browser queries <span className="text-white font-semibold">both Ethereum L1 and Arbitrum L2</span> simultaneously. The PrivacyPreservingRegistry contract supports anonymous submissions via zero-knowledge proofs and community-driven quality scoring.</p>
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>

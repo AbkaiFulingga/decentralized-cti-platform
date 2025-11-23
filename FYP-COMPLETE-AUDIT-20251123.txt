@@ -1,0 +1,319 @@
+════════════════════════════════════════════════════════
+📁 FYP PROJECT FILE STRUCTURE
+════════════════════════════════════════════════════════
+
+🏠 PROJECT ROOT: ~/blockchain-dev/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📜 SMART CONTRACTS (contracts/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+contracts/CredentialRegistry.sol                          782   Sep 21 15:04
+contracts/EnhancedIOCRegistry.sol                        5.1K   Sep 30 13:52
+contracts/Governance.sol                                 3.1K   Sep 20 14:47
+contracts/IOCRegistry.sol                                1.1K   Sep 15 18:46
+contracts/IOCRegistryMerkle.sol                          2.1K   Sep 21 15:51
+contracts/MerkleZKRegistry.sol                           5.5K   Nov 16 15:47
+contracts/OracleIOCFeed.sol                              3.3K   Nov 15 14:03
+contracts/PrivacyPreservingRegistry.sol                   20K   Nov 1 14:32
+contracts/StorageContribution.sol                        4.4K   Nov 1 14:54
+contracts/ThresholdGovernance.sol                        9.4K   Nov 1 18:20
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚙️  DEPLOYMENT SCRIPTS (scripts/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+scripts/addAdmin3.js                                     2.2K   Oct 31 18:47
+scripts/addBatch.js                                      1.2K   Sep 16 16:54
+scripts/addPrivacyBatch.js                               4.5K   Oct 1 14:25
+scripts/addSTIXBatch.js                                  6.2K   Oct 5 04:14
+scripts/admin2ApproveBatches.js                          4.0K   Nov 1 17:52
+scripts/approveAllWithAdmin1.js                          2.9K   Nov 1 17:46
+scripts/checkActualABI.js                                1.3K   Nov 2 16:14
+scripts/checkAdmin3.js                                   1.7K   Nov 1 17:36
+scripts/checkAdminContributorStatus.js                   4.4K   Nov 1 13:17
+scripts/checkBatchSubmitters.js                          1.8K   Nov 1 17:40
+scripts/checkContractExists.js                            759   Nov 2 18:15
+scripts/checkContractFunctions.js                        1.5K   Nov 8 16:34
+scripts/checkDeployedContract.js                         1.4K   Nov 2 15:51
+scripts/debugAddBatch.js                                 3.0K   Nov 1 16:41
+scripts/debugAdmin3Approvals.js                          1.3K   Nov 1 17:53
+scripts/debugApprovals.js                                1.4K   Nov 1 17:29
+scripts/deploy-merkle-zk.js                              2.4K   Nov 16 15:59
+scripts/deploy-oracle.js                                 3.4K   Nov 15 15:39
+scripts/deploy.js                                        6.0K   Nov 19 17:59
+scripts/deployComplete.js                                4.8K   Nov 1 14:41
+scripts/deployGovernance.js                              1.5K   Sep 20 13:25
+scripts/deployMerkle.js                                   609   Sep 16 16:54
+scripts/detailedVotingHistory.js                         3.3K   Nov 1 18:11
+scripts/fundAdmin3.js                                    1.1K   Nov 1 10:27
+scripts/governanceSepolia.js                             4.4K   Oct 12 08:08
+scripts/interact.js                                       908   Sep 21 16:08
+scripts/oracle-service.js                                 11K   Nov 15 17:38
+scripts/proposeAndVote.js                                1.7K   Sep 21 16:13
+scripts/readBatches.js                                    658   Sep 21 16:09
+scripts/registerAdminAsContributor.js                    1.6K   Nov 1 19:01
+scripts/registerEnhancedAnonymous.js                     3.0K   Oct 4 18:09
+scripts/stix-utils.js                                    4.6K   Oct 5 03:50
+scripts/submitEnhancedAnonymous.js                       2.3K   Oct 4 18:09
+scripts/test-stix-conversion.js                          2.1K   Oct 5 03:37
+scripts/test1-registry.js                                3.5K   Sep 30 13:53
+scripts/test2-governance.js                              3.8K   Sep 30 14:44
+scripts/test3-zkp-integration.js                         3.7K   Oct 1 14:11
+scripts/test4-privacy-governance.js                      2.8K   Oct 2 14:39
+scripts/testModifiedOption3.js                           8.6K   Nov 1 17:08
+scripts/testNewDeployment.js                             3.5K   Oct 31 18:26
+scripts/testTieredStaking.js                             3.9K   Nov 1 10:17
+scripts/testWithAdmin1.js                                 704   Nov 1 17:42
+scripts/update-contributor-merkle.js                     6.6K   Nov 19 18:27
+scripts/verifyAdminRegistration.js                       2.5K   Nov 1 18:07
+scripts/verifyBothContracts.js                           1.7K   Nov 3 13:41
+scripts/verifyDeployment.js                              1.4K   Oct 5 08:36
+scripts/verifyIOC.js                                      625   Sep 21 16:09
+scripts/verifyPrivacyIOC.js                              3.6K   Oct 1 14:59
+scripts/verifySingleIOC.js                               2.3K   Sep 21 16:09
+scripts/zkp-utils-enhanced.js                            2.3K   Oct 4 18:08
+scripts/zkp-utils.js                                     3.1K   Oct 4 17:43
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎨 FRONTEND - APP PAGES (cti-frontend/app/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cti-frontend/app/submit/page.js                           526
+cti-frontend/app/page.js                                 2.2K
+cti-frontend/app/statistics/page.js                       308
+cti-frontend/app/news/page.js                             150
+cti-frontend/app/history/page.js                          537
+cti-frontend/app/layout.js                                574
+cti-frontend/app/batches/page.js                          518
+cti-frontend/app/admin/page.js                            539
+cti-frontend/app/verify/page.jsx                          298
+cti-frontend/app/api/contributor-tree/route.js           2.4K
+cti-frontend/app/api/pinata-upload/route.js              2.1K
+cti-frontend/app/api/ipfs-fetch/route.js                 1.3K
+cti-frontend/app/api/cyber-news/route.js                 3.4K
+cti-frontend/app/api/route.js                            1.8K
+cti-frontend/app/dashboard/page.js                        312
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧩 FRONTEND - COMPONENTS (cti-frontend/components/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cti-frontend/components/NavBar.jsx                       6.2K
+cti-frontend/components/AdminGovernancePanel.jsx          25K
+cti-frontend/components/StorageContribution.jsx          7.2K
+cti-frontend/components/IOCVerification.jsx              9.9K
+cti-frontend/components/AnalyticsDashboard.jsx            36K
+cti-frontend/components/TransactionHistory.jsx            13K
+cti-frontend/components/GasCostEstimator.jsx             4.7K
+cti-frontend/components/BatchBrowser.jsx                  26K
+cti-frontend/components/BatchStatistics.jsx              6.3K
+cti-frontend/components/ContributorDashboard.jsx          29K
+cti-frontend/components/CyberNewsFeed.jsx                4.3K
+cti-frontend/components/NetworkSelector.jsx              6.5K
+cti-frontend/components/IOCSubmissionForm.jsx             41K
+cti-frontend/components/IOCWaterfall.jsx                  42K
+cti-frontend/components/PlatformDashboard.jsx            9.4K
+cti-frontend/components/config.js                        1.3K
+cti-frontend/components/OracleFeedDisplay.jsx             19K
+cti-frontend/components/EnhancedIOCSearch.jsx             29K
+cti-frontend/components/IOCUniverse.jsx                   47K
+cti-frontend/components/app/page.js                       537
+cti-frontend/components/app/layout.js                     832
+cti-frontend/components/app/admin/page.js                 515
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔧 FRONTEND - UTILS (cti-frontend/utils/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cti-frontend/utils/constants.js                          5.4K   Nov 21 16:04
+cti-frontend/utils/contract-helpers.js                   2.8K   Oct 26 09:02
+cti-frontend/utils/merkle-zkp.js                         5.3K   Nov 16 14:40
+cti-frontend/utils/stix-utils.js                         4.6K   Oct 5 04:57
+cti-frontend/utils/wallet-events.js                      1.8K   Oct 26 16:42
+cti-frontend/utils/zkp-utils-enhanced.js                 2.3K   Oct 5 04:57
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 FRONTEND - API ROUTES (cti-frontend/app/api/)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+cti-frontend/app/api/contributor-tree/route.js           2.4K
+cti-frontend/app/api/pinata-upload/route.js              2.1K
+cti-frontend/app/api/ipfs-fetch/route.js                 1.3K
+cti-frontend/app/api/cyber-news/route.js                 3.4K
+cti-frontend/app/api/route.js                            1.8K
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⚙️  CONFIGURATION FILES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+.env                                                     4.0K   Nov 21 15:57
+hardhat.config.js                                        1.8K   Nov 15 14:42
+package.json                                             1.1K   Nov 16 15:13
+cti-frontend/package.json                                 730   Nov 15 18:18
+cti-frontend/tailwind.config.js                           253   Oct 5 07:03
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 FILE COUNT SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Smart Contracts:    10 files
+Deployment Scripts: 51 files
+Frontend Pages:     15 files
+Components:         22 files
+Utils:              6 files
+API Routes:         5 files
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📦 DEPLOYED CONTRACTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 ETHEREUM SEPOLIA (L1):
+   Registry:    0xB490aBfFf0639453a8A5e5e52BF4E8055269cfE4
+   Governance:  0x1D9c49C737fE587bdBCE7a2a3e04293004216e18
+   Storage:     0x174d2a6FF20Bb0928B9e39BE8F65d823db73c983
+
+⚡ ARBITRUM SEPOLIA (L2):
+   Registry:    0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A
+   Governance:  0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52
+   Storage:     0x177fD44E879a162f3b642b313F253D97bD73a301
+   MerkleZK:    0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1
+   OracleFeed:  0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔑 KEY FEATURES IMPLEMENTED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ Multi-tier staking (0.01, 0.05, 0.1 ETH)
+✅ Dual-network deployment (L1 Ethereum + L2 Arbitrum)
+✅ Zero-knowledge proof anonymous submissions (Merkle tree)
+✅ IPFS decentralized storage integration
+✅ 3/3 multi-sig governance (trustless approval)
+✅ Reputation scoring system (on-chain)
+✅ Merkle tree verification for IOCs
+✅ Dynamic gas fee calculation
+✅ MetaMask wallet integration
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📈 CODE STATISTICS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Total Solidity Lines:  1565
+Total JavaScript Lines: 30038
+Total Project Lines:    35952
+
+════════════════════════════════════════════════════════
+✅ FYP FILE AUDIT COMPLETE
+════════════════════════════════════════════════════════
+
+
+═══════════════════════════════════════════════════════════════
+📊 SMART CONTRACT ANALYSIS
+═══════════════════════════════════════════════════════════════
+
+📜 CredentialRegistry.sol
+   Lines:     29
+   Functions: 2
+   Events:    2
+   Modifiers: 1
+   Key Functions:
+          function issueCredential(address member) external onlyGovernance {
+          function revokeCredential(address member) external onlyGovernance {
+
+📜 EnhancedIOCRegistry.sol
+   Lines:     156
+   Functions: 9
+   Events:    5
+   Modifiers: 2
+   Key Functions:
+          function registerContributor() external payable {
+          function addBatch(string memory cid, bytes32 merkleRoot) public onlyActiveContributor {
+          function acceptBatch(uint256 batchIndex) external onlyGovernance {
+          function getBatch(uint256 index) public view returns (
+          function getContributor(address addr) external view returns (
+
+📜 Governance.sol
+   Lines:     107
+   Functions: 5
+   Events:    3
+   Modifiers: 1
+   Key Functions:
+          function acceptBatch(uint256 batchIndex) external;
+          function createProposal(uint256 batchIndex) external onlyMember returns (uint256) {
+          function vote(uint256 id, bool support) external onlyMember {
+          function finalizeProposal(uint256 id) external onlyMember {
+          function getProposal(uint256 id)
+
+📜 IOCRegistry.sol
+   Lines:     31
+   Functions: 3
+   Events:    1
+   Modifiers: 0
+   Key Functions:
+          function addIOC(string memory cid, string memory iocType) public {
+          function getIOC(uint256 id) public view returns (string memory, string memory, uint256, address) {
+          function totalIOCs() public view returns (uint256) {
+
+📜 IOCRegistryMerkle.sol
+   Lines:     63
+   Functions: 6
+   Events:    2
+   Modifiers: 1
+   Key Functions:
+          function setGovernance(address _gov) external onlyOwner {
+          function addBatch(string memory cid, bytes32 merkleRoot) public {
+          function getBatchCount() public view returns (uint256) {
+          function getBatch(uint256 index) public view returns (string memory, bytes32, uint256, bool) {
+          function verifyIOC(uint256 batchIndex, bytes32 leaf, bytes32[] calldata proof) public view returns (bool) {
+
+📜 MerkleZKRegistry.sol
+   Lines:     155
+   Functions: 8
+   Events:    5
+   Modifiers: 1
+   Key Functions:
+          function addBatch(
+          function updateContributorRoot(bytes32 newRoot, uint256 count) external onlyOwner {
+          function submitBatchAnonymous(
+          function verifyAnonymousContributor(
+          function getTreeFreshness() external view returns (uint256 age, bool isStale) {
+
+📜 OracleIOCFeed.sol
+   Lines:     109
+   Functions: 7
+   Events:    2
+   Modifiers: 1
+   Key Functions:
+          function registerFeed(string memory feedName) external onlyOracle {
+          function submitFeed(
+          function getFeedInfo(string memory feedName) external view returns (
+          function getFeedBatches(string memory feedName) external view returns (uint256[] memory) {
+          function getActiveFeeds() external view returns (string[] memory) {
+
+📜 PrivacyPreservingRegistry.sol
+   Lines:     543
+   Functions: 27
+   Events:    11
+   Modifiers: 2
+   Key Functions:
+          function registerContributor(uint256 tier) external payable {
+          function registerAnonymousContributor(
+          function registerAnonymousContributorEnhanced(
+          function addBatch(
+          function acceptBatch(uint256 batchIndex) external onlyGovernance {
+
+📜 StorageContribution.sol
+   Lines:     116
+   Functions: 7
+   Events:    5
+   Modifiers: 1
+   Key Functions:
+          function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256);
+          function registerStorageProvider(uint256 storageGB) external payable {
+          function submitStorageProof(string[] memory cids) external {
+          function verifyStorageProvider(address provider) external onlyGovernance {
+          function getStorageRole(address provider) external view returns (string memory) {
+
+📜 ThresholdGovernance.sol
+   Lines:     256
+   Functions: 15
+   Events:    9
+   Modifiers: 1
+   Key Functions:
+          function acceptBatch(uint256 batchIndex) external;
+          function slashContributor(address contributor, uint256 amount) external;
+          function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256);
+          function getAdminRewardPool() external view returns (uint256);
+          function approveBatch(uint256 batchIndex) external onlyAdmin {
+
+═══════════════════════════════════════════════════════════════

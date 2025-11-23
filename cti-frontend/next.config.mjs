@@ -1,8 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  
-  // Allow dev server access from network
+  productionBrowserSourceMaps: false,
   async headers() {
     return [
       {
@@ -14,8 +13,6 @@ const nextConfig = {
       },
     ];
   },
-  
-  // Silence turbopack workspace warning
   turbopack: {
     root: process.cwd(),
   },

@@ -3,334 +3,577 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { NETWORKS } from '../utils/constants';
 
 export default function AdminGovernancePanel() {
-  const [isAdmin, setIsAdmin] = useState(false);
   const [pendingBatches, setPendingBatches] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [walletAddress, setWalletAddress] = useState('');
-  const [approving, setApproving] = useState(false);
-  const [approvingBatch, setApprovingBatch] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-
-  const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
-  const governanceAddress = "0x2b86E798F7677d40b90Bd92BeA2e722cb36341fe";
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [walletAddress, setWalletAddress] = useState('');
+  const [currentNetwork, setCurrentNetwork] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [expandedBatch, setExpandedBatch] = useState(null);
 
   useEffect(() => {
-    checkAdminStatus();
+    if (typeof window !== 'undefined' && window.ethereum) {
+      checkConnection();
+      
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+      
+      return () => {
+        if (window.ethereum.removeListener) {
+          window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+          window.ethereum.removeListener('chainChanged', handleChainChanged);
+        }
+      };
+    }
   }, []);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (walletConnected && currentNetwork) {
+      checkAdminStatus();
       loadPendingBatches();
-      const interval = setInterval(loadPendingBatches, 10000);
-      return () => clearInterval(interval);
     }
-  }, [isAdmin]);
+  }, [walletConnected, currentNetwork]);
 
-  const checkAdminStatus = async () => {
+  const checkConnection = async () => {
+    if (window.ethereum) {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const accounts = await provider.listAccounts();
+        
+        if (accounts.length > 0) {
+          setWalletAddress(accounts[0].address);
+          setWalletConnected(true);
+          
+          const network = await provider.getNetwork();
+          const chainId = network.chainId.toString();
+          
+          if (chainId === "11155111") {
+            setCurrentNetwork(NETWORKS.sepolia);
+          } else if (chainId === "421614") {
+            setCurrentNetwork(NETWORKS.arbitrumSepolia);
+          }
+        }
+      } catch (error) {
+        console.error('Connection check failed:', error);
+      }
+    }
+  };
+
+  const handleAccountsChanged = async (accounts) => {
+    if (accounts.length === 0) {
+      setWalletConnected(false);
+      setWalletAddress('');
+      setIsAdmin(false);
+      setPendingBatches([]);
+    } else {
+      setWalletAddress(accounts[0]);
+      setWalletConnected(true);
+    }
+  };
+
+  const handleChainChanged = () => {
+    window.location.reload();
+  };
+
+  const connectWallet = async () => {
     try {
       if (!window.ethereum) {
         setError('Please install MetaMask');
-        setLoading(false);
         return;
       }
 
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
-      const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
-      setWalletAddress(userAddress);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
+      setWalletAddress(accounts[0]);
+      setWalletConnected(true);
+      
+      const network = await provider.getNetwork();
+      const chainId = network.chainId.toString();
+      
+      if (chainId === "11155111") {
+        setCurrentNetwork(NETWORKS.sepolia);
+      } else if (chainId === "421614") {
+        setCurrentNetwork(NETWORKS.arbitrumSepolia);
+      } else {
+        setError('Please switch to Ethereum Sepolia or Arbitrum Sepolia');
+      }
+      
+    } catch (error) {
+      setError('Failed to connect wallet');
+    }
+  };
 
+  const switchNetwork = async (targetNetwork) => {
+    try {
+      const chainIdHex = '0x' + targetNetwork.chainId.toString(16);
+      
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: chainIdHex }],
+      });
+      
+      setCurrentNetwork(targetNetwork);
+      setPendingBatches([]);
+      setIsAdmin(false);
+      
+    } catch (error) {
+      if (error.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0x' + targetNetwork.chainId.toString(16),
+              chainName: targetNetwork.name,
+              nativeCurrency: targetNetwork.nativeCurrency,
+              rpcUrls: [targetNetwork.rpcUrl],
+              blockExplorerUrls: [targetNetwork.explorerUrl]
+            }]
+          });
+          setCurrentNetwork(targetNetwork);
+          setPendingBatches([]);
+        } catch (addError) {
+          setError(`Failed to add network: ${addError.message}`);
+        }
+      } else {
+        setError(`Failed to switch network: ${error.message}`);
+      }
+    }
+  };
+
+  const checkAdminStatus = async () => {
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const governanceAddress = currentNetwork.contracts.governance;
+      
       const governanceABI = [
         "function admins(address) external view returns (bool)"
       ];
-
-      const governance = new ethers.Contract(governanceAddress, governanceABI, provider);
-      const adminStatus = await governance.admins(userAddress);
-
+      
+      const governance = new ethers.Contract(governanceAddress, governanceABI, signer);
+      const adminStatus = await governance.admins(await signer.getAddress());
+      
+      console.log(`Admin check on ${currentNetwork.name} for ${await signer.getAddress()}:`, adminStatus);
       setIsAdmin(adminStatus);
-      setLoading(false);
-
-      if (!adminStatus) {
-        setError('Access Denied: Your wallet is not authorized as an admin');
-      }
+      
     } catch (error) {
-      console.error('Admin check error:', error);
-      setError(`Failed to check admin status: ${error.message}`);
-      setLoading(false);
+      console.error('Error checking admin status:', error);
+      setIsAdmin(false);
     }
   };
 
   const loadPendingBatches = async () => {
+    setLoading(true);
+    setError('');
+    
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
+      const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
-      const userAddress = await signer.getAddress();
-
+      const registryAddress = currentNetwork.contracts.registry;
+      
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string, bytes32, uint256, bool, bytes32, bool, uint256, uint256)"
+        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
       ];
-
-      // CORRECTED: Use proper struct return type
-      const governanceABI = [
-        "function getBatchApprovalStatus(uint256 batchIndex) external view returns (uint256 approvals, bool executed, uint256 createdAt)"
-      ];
-
-      const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      const governance = new ethers.Contract(governanceAddress, governanceABI, provider);
-
-      const batchCount = await registry.getBatchCount();
+      
+      const registry = new ethers.Contract(registryAddress, registryABI, signer);
+      const count = await registry.getBatchCount();
+      
+      console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
+      
       const pending = [];
-
-      for (let i = 0; i < Number(batchCount); i++) {
-        const batch = await registry.getBatch(i);
-        const accepted = batch[3];
-
-        if (!accepted) {
-          // Use getBatchApprovalStatus instead of nested mapping
-          const approvalStatus = await governance.getBatchApprovalStatus(i);
-          const approvalCount = Number(approvalStatus[0]); // approvals
-          const executed = approvalStatus[1]; // executed
+      
+      for (let i = 0; i < count; i++) {
+        try {
+          const batch = await registry.getBatch(i);
           
-          // Check if current admin has approved using EVENTS (workaround)
-          // Since we can't query nested mapping directly, assume not approved
-          // User will get "Already approved" error if they try to approve again
-          const currentAdminApproved = false; // Cannot query nested mapping
-
-          // Fetch IOC count from IPFS
-          let iocCount = 0;
-          try {
-            const response = await fetch(`https://gateway.pinata.cloud/ipfs/${batch[0]}`);
-            const iocData = await response.json();
-            iocCount = iocData.iocs?.length || iocData.flatIOCs?.length || 0;
-          } catch (err) {
-            console.error(`Failed to fetch IOC count for batch ${i}:`, err);
+          if (!batch[3]) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+            const result = await response.json();
+            
+            if (result.success) {
+              pending.push({
+                id: i,
+                cid: batch[0],
+                merkleRoot: batch[1],
+                timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
+                approved: batch[3],
+                contributorHash: batch[4],
+                isPublic: batch[5],
+                voteCount: Number(batch[6]),
+                falsePositives: Number(batch[7]),
+                iocCount: result.data.iocs.length,
+                iocData: result.data,
+                gateway: result.gateway
+              });
+            } else {
+              pending.push({
+                id: i,
+                cid: batch[0],
+                merkleRoot: batch[1],
+                timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
+                approved: batch[3],
+                contributorHash: batch[4],
+                isPublic: batch[5],
+                voteCount: Number(batch[6]),
+                falsePositives: Number(batch[7]),
+                iocCount: 0,
+                iocData: null,
+                error: 'IPFS data unavailable'
+              });
+            }
+            
+            console.log(`✅ Loaded pending batch ${i}`);
           }
-
-          pending.push({
-            index: i,
-            cid: batch[0],
-            merkleRoot: batch[1],
-            timestamp: Number(batch[2]),
-            contributorHash: batch[4],
-            isPublic: batch[5],
-            iocCount: iocCount,
-            approvalCount: approvalCount,
-            currentAdminApproved: currentAdminApproved, // Will show button, catch error if duplicate
-            contributor: batch[5] ? ethers.getAddress('0x' + batch[4].slice(26)) : 'Anonymous'
-          });
+        } catch (error) {
+          console.log(`Could not fetch batch ${i}:`, error.message);
         }
       }
-
+      
       setPendingBatches(pending);
+      console.log(`✅ Found ${pending.length} pending batches on ${currentNetwork.name}`);
+      
     } catch (error) {
       console.error('Error loading pending batches:', error);
+      setError(error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const approveBatch = async (batchIndex) => {
-    setApproving(true);
-    setApprovingBatch(batchIndex);
-    
+  const approveBatch = async (batchId) => {
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum, "any");
+      setError('');
+      const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
-
+      const governanceAddress = currentNetwork.contracts.governance;
+      
       const governanceABI = [
         "function approveBatch(uint256 batchIndex) external"
       ];
-
+      
       const governance = new ethers.Contract(governanceAddress, governanceABI, signer);
-
-      console.log(`Approving batch ${batchIndex}...`);
-      const tx = await governance.approveBatch(batchIndex);
       
-      console.log('Transaction sent, waiting for confirmation...');
+      console.log(`Approving batch ${batchId} on ${currentNetwork.name}...`);
+      const tx = await governance.approveBatch(batchId, { gasLimit: 200000 });
+      
+      console.log("Approval tx:", tx.hash);
       await tx.wait();
-
-      alert(`✅ Batch ${batchIndex} approved successfully!`);
       
-      // Reload pending batches
+      console.log("✅ Batch approved!");
       await loadPendingBatches();
+      
     } catch (error) {
       console.error('Approval error:', error);
-      
-      if (error.message.includes('Already approved')) {
-        alert('ℹ️ You have already approved this batch');
-      } else if (error.message.includes('user rejected')) {
-        alert('❌ Transaction cancelled');
-      } else {
-        alert(`❌ Approval failed: ${error.message}`);
-      }
-    } finally {
-      setApproving(false);
-      setApprovingBatch(null);
+      setError(`Failed to approve batch: ${error.message}`);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="max-w-6xl mx-auto mt-12">
-        <div className="bg-purple-900/30 backdrop-blur-xl rounded-2xl p-8 border border-purple-700/50">
-          <div className="flex items-center justify-center gap-3 text-gray-400">
-            <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
-            <p>Checking admin status...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error && !isAdmin) {
-    return (
-      <div className="max-w-6xl mx-auto mt-12">
-        <div className="bg-red-500/10 backdrop-blur-xl rounded-2xl p-6 border border-red-500/30">
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">🚫</span>
-            <div>
-              <p className="text-red-300 font-semibold text-lg">Admin Access Required</p>
-              <p className="text-red-400 text-sm mt-1">{error}</p>
-              <p className="text-gray-400 text-sm mt-2">
-                Connected: {walletAddress.substring(0, 10)}...
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const toggleBatchExpansion = (batchId) => {
+    setExpandedBatch(expandedBatch === batchId ? null : batchId);
+  };
 
   return (
-    <div className="max-w-6xl mx-auto mt-12">
-      <div className="bg-purple-900/30 backdrop-blur-xl rounded-2xl p-8 border border-purple-700/50">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-            <span>🛡️</span> Admin Governance Panel
-          </h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-400">Admin:</span>
-            <span className="text-green-400 font-mono text-sm">
-              {walletAddress.substring(0, 6)}...{walletAddress.substring(38)}
-            </span>
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-500/20 border border-green-500/30 rounded-full">
-              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-              <span className="text-green-400 text-xs font-semibold">Admin</span>
-            </div>
+    <div className="max-w-7xl mx-auto">
+      <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
+        
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-3xl font-bold text-white mb-2">🛡️ Admin Governance Panel</h2>
+            <p className="text-gray-400">Multi-signature batch approval system</p>
           </div>
+          
+          {walletConnected && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => switchNetwork(NETWORKS.sepolia)}
+                disabled={currentNetwork?.chainId === 11155111}
+                className={`py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                  currentNetwork?.chainId === 11155111
+                    ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                }`}
+              >
+                🌐 Ethereum Sepolia
+              </button>
+              
+              <button
+                onClick={() => switchNetwork(NETWORKS.arbitrumSepolia)}
+                disabled={currentNetwork?.chainId === 421614}
+                className={`py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                  currentNetwork?.chainId === 421614
+                    ? 'bg-purple-500/30 text-purple-300 border border-purple-500/50'
+                    : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                }`}
+              >
+                ⚡ Arbitrum Sepolia
+              </button>
+            </div>
+          )}
         </div>
 
-        {pendingBatches.length === 0 ? (
+        {!walletConnected ? (
           <div className="text-center py-12">
-            <div className="text-6xl mb-4">✅</div>
-            <p className="text-gray-400 text-lg">No pending batches awaiting approval</p>
-            <p className="text-gray-500 text-sm mt-2">All submitted batches have been reviewed</p>
+            <div className="mb-6">
+              <div className="w-20 h-20 mx-auto bg-gradient-to-br from-red-500 to-orange-500 rounded-full flex items-center justify-center mb-4">
+                <span className="text-4xl">🔐</span>
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">Admin Access Required</h3>
+              <p className="text-gray-400">Connect your admin wallet to manage batches</p>
+            </div>
+            
+            <button
+              onClick={connectWallet}
+              className="px-8 py-4 bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white font-semibold rounded-xl transition-all transform hover:scale-105 shadow-lg"
+            >
+              Connect Admin Wallet
+            </button>
+          </div>
+        ) : !isAdmin ? (
+          <div className="text-center py-12">
+            <div className="mb-6">
+              <div className="w-20 h-20 mx-auto bg-red-500/20 border-4 border-red-500/50 rounded-full flex items-center justify-center mb-4">
+                <span className="text-4xl">🚫</span>
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">Access Denied</h3>
+              <p className="text-gray-400">This wallet is not registered as an admin on {currentNetwork?.name}</p>
+              <p className="text-gray-500 text-sm mt-2 font-mono">
+                {walletAddress.substring(0, 10)}...{walletAddress.substring(32)}
+              </p>
+            </div>
+            
+            <div className="mt-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+              <p className="text-yellow-300 text-sm">
+                💡 Only the 3 registered admin addresses can approve batches. Admin status is network-specific - try switching networks.
+              </p>
+            </div>
           </div>
         ) : (
           <>
-            <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
-              <p className="text-yellow-300 text-sm flex items-center gap-2">
-                <span>📋</span>
-                <span className="font-semibold">{pendingBatches.length} pending batch(es)</span> awaiting approval (2 of 3 threshold)
-              </p>
+            <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-500/20 rounded-full flex items-center justify-center">
+                    <span className="text-2xl">✅</span>
+                  </div>
+                  <div>
+                    <span className="text-green-300 font-semibold">Admin Access Granted on {currentNetwork?.name}</span>
+                    <p className="text-gray-400 text-sm font-mono">
+                      {walletAddress.substring(0, 10)}...{walletAddress.substring(32)}
+                    </p>
+                  </div>
+                </div>
+                
+                <button
+                  onClick={loadPendingBatches}
+                  disabled={loading}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {loading ? '🔄 Loading...' : '🔄 Refresh'}
+                </button>
+              </div>
             </div>
 
-            <div className="space-y-4">
-              {pendingBatches.map((batch) => (
-                <div
-                  key={batch.index}
-                  className="bg-purple-950/50 rounded-xl p-6 border border-purple-700/50 hover:border-purple-600/70 transition-all"
-                >
-                  <div className="flex items-start justify-between mb-4">
-                    <div className="flex items-center gap-3">
-                      <div className="text-3xl">⏳</div>
-                      <div>
-                        <h3 className="text-white font-bold text-lg">
-                          Batch #{batch.index}
-                        </h3>
-                        <p className="text-gray-400 text-sm">
-                          {new Date(batch.timestamp * 1000).toLocaleString()}
-                        </p>
+            {error && (
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300">
+                ❌ {error}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="text-center py-12">
+                <div className="w-16 h-16 border-4 border-purple-500/30 border-t-purple-500 rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-gray-400">Loading pending batches from {currentNetwork?.name}...</p>
+              </div>
+            ) : pendingBatches.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-6xl mb-4">✨</div>
+                <p className="text-gray-400 text-lg">No pending batches to approve</p>
+                <p className="text-gray-500 text-sm mt-2">All submissions on {currentNetwork?.name} have been processed!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {pendingBatches.map((batch) => (
+                  <div
+                    key={batch.id}
+                    className="bg-gray-900/50 border border-yellow-500/30 rounded-xl overflow-hidden hover:border-yellow-500/50 transition-all"
+                  >
+                    <div className="p-6">
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 bg-yellow-500/20 rounded-full flex items-center justify-center text-yellow-400">
+                            ⏳
+                          </div>
+                          <div>
+                            <h3 className="text-xl font-bold text-white">Batch #{batch.id}</h3>
+                            <p className="text-gray-400 text-sm">
+                              {batch.iocCount || '?'} IOCs • {batch.timestamp}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-3">
+                          <div className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs font-semibold border border-yellow-500/30">
+                            {batch.voteCount} confirmations
+                          </div>
+                          {batch.falsePositives > 0 && (
+                            <div className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs font-semibold border border-red-500/30">
+                              {batch.falsePositives} disputes
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-4">
+                        <div>
+                          <span className="text-gray-500">Contributor Hash:</span>
+                          <p className="text-purple-400 font-mono">
+                            {batch.contributorHash.substring(0, 10)}...{batch.contributorHash.substring(58)}
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <span className="text-gray-500">IPFS CID:</span>
+                          <p className="text-blue-400 font-mono break-all">
+                            {batch.cid.substring(0, 20)}...
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <span className="text-gray-500">Merkle Root:</span>
+                          <p className="text-green-400 font-mono">
+                            {batch.merkleRoot.substring(0, 10)}...{batch.merkleRoot.substring(58)}
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <span className="text-gray-500">Privacy Mode:</span>
+                          <p className={batch.isPublic ? 'text-blue-400' : 'text-purple-400'}>
+                            {batch.isPublic ? '🌐 Public Identity' : '🔒 Anonymous (ZKP)'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => toggleBatchExpansion(batch.id)}
+                          className="text-purple-400 hover:text-purple-300 text-sm font-semibold"
+                        >
+                          {expandedBatch === batch.id ? '▼ Hide IOCs' : '▶ Show IOCs'}
+                        </button>
+                        
+                        <button
+                          onClick={() => approveBatch(batch.id)}
+                          className="px-6 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg"
+                        >
+                          ✅ Approve Batch
+                        </button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <div className="px-4 py-2 bg-yellow-500/20 border border-yellow-500/30 rounded-full">
-                        <span className="text-yellow-300 font-semibold text-sm">
-                          {batch.approvalCount} of 2 votes
-                        </span>
+                    {expandedBatch === batch.id && batch.iocData && (
+                      <div className="border-t border-gray-700 p-6 bg-gray-950/50">
+                        <h4 className="text-lg font-bold text-white mb-4">📋 IOC Contents</h4>
+                        
+                        <div className="mb-4 p-4 bg-gray-900/70 rounded-lg">
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-gray-500">Format:</span>
+                              <p className="text-white font-semibold">{batch.iocData.format}</p>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Privacy Mode:</span>
+                              <p className="text-purple-400 font-semibold">
+                                {batch.iocData.metadata?.privacyMode || 'public'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Quality Score:</span>
+                              <p className="text-green-400 font-semibold">
+                                {batch.voteCount > 0 ? `${Math.round((batch.voteCount / (batch.voteCount + batch.falsePositives)) * 100)}%` : 'No votes yet'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Community Feedback:</span>
+                              <p className="text-yellow-400 font-semibold">
+                                {batch.voteCount} ✓ / {batch.falsePositives} ✗
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="max-h-64 overflow-y-auto bg-gray-900/70 rounded-lg p-4">
+                          <div className="font-mono text-sm space-y-1">
+                            {batch.iocData.iocs?.map((ioc, idx) => (
+                              <div key={idx} className="text-gray-300 hover:text-white hover:bg-gray-800/50 p-2 rounded transition-all">
+                                <span className="text-gray-500 mr-3">{idx + 1}.</span>
+                                {ioc}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex gap-3">
+                          <a
+                            href={`${currentNetwork.explorerUrl}/address/${currentNetwork.contracts.registry}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all"
+                          >
+                            🔗 View Contract
+                          </a>
+                          
+                          <a
+                            href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
+                          >
+                            📦 View on IPFS
+                          </a>
+                        </div>
                       </div>
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        batch.isPublic
-                          ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                          : 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
-                      }`}>
-                        {batch.isPublic ? '🌐 Public' : '👤 Anonymous'}
-                      </span>
-                    </div>
-                  </div>
+                    )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-4">
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">IOC Count</p>
-                      <p className="text-purple-300 font-bold text-xl">{batch.iocCount}</p>
-                    </div>
-
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">CID</p>
-                      <p className="text-blue-400 font-mono text-xs truncate">{batch.cid}</p>
-                    </div>
-
-                    {batch.isPublic && (
-                      <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                        <p className="text-gray-400 text-xs mb-1">Contributor</p>
-                        <p className="text-green-400 font-mono text-xs truncate">
-                          {batch.contributor.substring(0, 10)}...
+                    {expandedBatch === batch.id && batch.error && (
+                      <div className="border-t border-gray-700 p-6 bg-red-500/5">
+                        <p className="text-red-400 text-sm">⚠️ {batch.error}</p>
+                        <p className="text-gray-500 text-xs mt-2">
+                          IPFS data temporarily unavailable. The batch can still be approved.
                         </p>
                       </div>
                     )}
                   </div>
+                ))}
+              </div>
+            )}
 
-                  <div className="space-y-2 text-sm font-mono mb-4">
-                    <div className="bg-purple-900/30 rounded-lg p-3 border border-purple-800/30">
-                      <p className="text-gray-400 text-xs mb-1">Merkle Root</p>
-                      <p className="text-purple-400 text-xs break-all">{batch.merkleRoot}</p>
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => approveBatch(batch.index)}
-                      disabled={approving && approvingBatch === batch.index}
-                      className={`flex-1 py-3 px-4 rounded-lg font-semibold transition-all ${
-                        (approving && approvingBatch === batch.index)
-                          ? 'bg-gray-700 text-gray-400 cursor-wait'
-                          : 'bg-green-600 hover:bg-green-700 text-white'
-                      }`}
-                    >
-                      {(approving && approvingBatch === batch.index) ? '⏳ Approving...' : '✅ Approve Batch'}
-                    </button>
-
-                    <a
-                      href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-6 py-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm transition-all"
-                    >
-                      📁 Inspect IOCs
-                    </a>
-
-                    <a
-                      href={`https://sepolia.etherscan.io/address/${governanceAddress}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="px-6 py-3 bg-pink-600/20 hover:bg-pink-600/30 border border-pink-500/30 rounded-lg text-pink-300 text-sm transition-all"
-                    >
-                      🔗 View Contract
-                    </a>
-                  </div>
+            <div className="mt-8 p-6 bg-gray-900/30 rounded-xl border border-gray-700">
+              <h3 className="font-bold text-white mb-4">ℹ️ Privacy-Preserving Multi-Sig Governance</h3>
+              <div className="space-y-3 text-sm text-gray-400">
+                <div className="flex items-start gap-3">
+                  <span className="text-green-400">1.</span>
+                  <p>Each batch requires <span className="text-white font-semibold">3 out of 3 admin signatures</span> for approval</p>
                 </div>
-              ))}
+                <div className="flex items-start gap-3">
+                  <span className="text-green-400">2.</span>
+                  <p>Contributors can submit <span className="text-white font-semibold">anonymously via zero-knowledge proofs</span></p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="text-green-400">3.</span>
+                  <p>Community can confirm or dispute batches, affecting <span className="text-white font-semibold">quality scores</span></p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="text-yellow-400">⚠️</span>
+                  <p>You are managing batches on <span className="text-purple-400 font-semibold">{currentNetwork?.name}</span>. Switch networks to approve on other chains.</p>
+                </div>
+              </div>
             </div>
           </>
         )}

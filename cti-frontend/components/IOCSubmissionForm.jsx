@@ -1,174 +1,491 @@
 // components/IOCSubmissionForm.jsx
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
-import GasCostEstimator from './GasCostEstimator';
+import { NETWORKS, STAKING_TIERS } from '../utils/constants';
+import { zkProver } from '../utils/merkle-zkp';
 
 export default function IOCSubmissionForm() {
-  const [iocs, setIocs] = useState('');
-  const [format, setFormat] = useState('flat');
-  const [privacy, setPrivacy] = useState('public');
-  const [status, setStatus] = useState('');
+  const [iocInput, setIocInput] = useState('');
+  const [privacyMode, setPrivacyMode] = useState('public');
+  const [selectedTier, setSelectedTier] = useState('STANDARD');
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('');
+  const [merkleRoot, setMerkleRoot] = useState('');
+  const [ipfsCid, setIpfsCid] = useState('');
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
+  const [currentNetwork, setCurrentNetwork] = useState(null);
+  const [txHash, setTxHash] = useState('');
+  const [walletBalance, setWalletBalance] = useState('0');
   const [isRegistered, setIsRegistered] = useState(false);
+  const [contributorInfo, setContributorInfo] = useState(null);
+  const [zkpReady, setZkpReady] = useState(false);
+  const [zkpLoading, setZkpLoading] = useState(false);
+  const [anonymitySetSize, setAnonymitySetSize] = useState(0);
+  const [treeAge, setTreeAge] = useState(null);
+  const [isInTree, setIsInTree] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.ethereum) {
+      checkConnection();
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+      return () => {
+        if (window.ethereum.removeListener) {
+          window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+          window.ethereum.removeListener('chainChanged', handleChainChanged);
+        }
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (walletConnected && currentNetwork) {
+      checkBalance();
+      checkRegistrationStatus();
+    }
+  }, [walletConnected, currentNetwork]);
+
+  useEffect(() => {
+    if (walletConnected && privacyMode === 'anonymous' && currentNetwork?.chainId === 421614 && isRegistered) {
+      loadZKPTree();
+    }
+  }, [walletConnected, privacyMode, currentNetwork, isRegistered, walletAddress]);
+
+  const checkConnection = async () => {
+    if (window.ethereum) {
+      try {
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const accounts = await provider.listAccounts();
+        if (accounts.length > 0) {
+          setWalletAddress(accounts[0].address);
+          setWalletConnected(true);
+          const network = await provider.getNetwork();
+          const chainId = network.chainId.toString();
+          if (chainId === "11155111") setCurrentNetwork(NETWORKS.sepolia);
+          else if (chainId === "421614") setCurrentNetwork(NETWORKS.arbitrumSepolia);
+        }
+      } catch (error) {
+        console.error('Connection failed:', error);
+      }
+    }
+  };
+
+  const handleAccountsChanged = (accounts) => {
+    if (accounts.length === 0) {
+      setWalletConnected(false);
+      setWalletAddress('');
+      setWalletBalance('0');
+      setIsRegistered(false);
+      setZkpReady(false);
+      setIsInTree(false);
+    } else {
+      setWalletAddress(accounts[0]);
+      setWalletConnected(true);
+    }
+  };
+
+  const handleChainChanged = () => window.location.reload();
 
   const connectWallet = async () => {
     try {
       if (!window.ethereum) {
-        setStatus('❌ Please install MetaMask');
+        setStatus('❌ Install MetaMask');
         return;
       }
-
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
       setWalletAddress(accounts[0]);
       setWalletConnected(true);
-      setStatus('✅ Wallet connected');
-
-      // Check registration status
-      await checkRegistrationStatus(accounts[0]);
+      const network = await provider.getNetwork();
+      const chainId = network.chainId.toString();
+      if (chainId === "11155111") setCurrentNetwork(NETWORKS.sepolia);
+      else if (chainId === "421614") setCurrentNetwork(NETWORKS.arbitrumSepolia);
+      else setStatus('❌ Switch to Sepolia or Arbitrum Sepolia');
     } catch (error) {
-      setStatus('❌ Failed to connect wallet');
+      setStatus('❌ Connection failed');
     }
   };
 
-  const checkRegistrationStatus = async (address) => {
+  const checkBalance = async () => {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
-      const registryABI = [
-        "function contributors(address) external view returns (uint256, uint256, uint256, uint256, bool, uint256)"
-      ];
-
-      const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      const contributor = await registry.contributors(address);
-      setIsRegistered(contributor[4]); // isActive field
+      const signer = await provider.getSigner();
+      const balance = await provider.getBalance(await signer.getAddress());
+      setWalletBalance(ethers.formatEther(balance));
     } catch (error) {
-      console.error('Registration check error:', error);
+      console.error('Balance check failed:', error);
     }
   };
 
-  const uploadToIPFS = async (data) => {
-    const response = await fetch('/api/pinata-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-
-    const result = await response.json();
-    
-    if (!result.success) {
-      throw new Error(result.error || 'IPFS upload failed');
+  const checkRegistrationStatus = async () => {
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      
+      const registry = new ethers.Contract(
+        currentNetwork.contracts.registry,
+        ["function contributors(address) view returns (uint256,uint256,uint256,uint256,uint256,bool,uint256)"],
+        signer
+      );
+      
+      const data = await registry.contributors(address);
+      setIsRegistered(data[5]);
+      
+      if (data[5]) {
+        const tierWei = Number(data[4]);
+        const tierName = tierWei === 10000000000000000 ? 'MICRO' :
+                          tierWei === 50000000000000000 ? 'STANDARD' :
+                          tierWei === 100000000000000000 ? 'PREMIUM' : 'UNKNOWN';
+        setContributorInfo({
+          tier: tierName,
+          submissionCount: Number(data[0]),
+          reputationScore: Number(data[2]),
+          totalStaked: ethers.formatEther(data[3])
+        });
+      }
+    } catch (error) {
+      console.error('Registration check failed:', error);
     }
-    
-    console.log('✅ Pinata upload successful:', result.IpfsHash);
-    return result.IpfsHash;
+  };
+
+  const loadZKPTree = async () => {
+    setZkpLoading(true);
+    try {
+      const loaded = await zkProver.loadContributorTree();
+      if (loaded) {
+        setZkpReady(true);
+        setAnonymitySetSize(zkProver.getAnonymitySetSize());
+        setTreeAge(zkProver.getTreeFreshness());
+        if (walletAddress) setIsInTree(zkProver.isInTree(walletAddress));
+      }
+    } finally {
+      setZkpLoading(false);
+    }
+  };
+
+  const switchNetwork = async (targetNetwork) => {
+    try {
+      await window.ethereum.request({
+        method: 'wallet_switchEthereumChain',
+        params: [{ chainId: '0x' + targetNetwork.chainId.toString(16) }]
+      });
+      setCurrentNetwork(targetNetwork);
+    } catch (error) {
+      if (error.code === 4902) {
+        try {
+          await window.ethereum.request({
+            method: 'wallet_addEthereumChain',
+            params: [{
+              chainId: '0x' + targetNetwork.chainId.toString(16),
+              chainName: targetNetwork.name,
+              nativeCurrency: targetNetwork.nativeCurrency,
+              rpcUrls: [targetNetwork.rpcUrl],
+              blockExplorerUrls: [targetNetwork.explorerUrl]
+            }]
+          });
+          setCurrentNetwork(targetNetwork);
+        } catch (addError) {
+          setStatus('❌ Failed to add network');
+        }
+      }
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     
-    if (!walletConnected) {
-      setStatus('❌ Please connect your wallet first');
+    if (!walletConnected || !iocInput.trim()) {
+      setStatus('❌ Connect wallet and enter IOCs');
       return;
     }
 
     setLoading(true);
-    setStatus('🔄 Processing submission...');
+    setStatus('🔄 Starting...');
+    setMerkleRoot('');
+    setIpfsCid('');
+    setTxHash('');
+
+    let registry = null;
 
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      const address = await signer.getAddress();
 
-      const iocArray = iocs.split('\n')
-        .map(line => line.trim())
-        .filter(line => line !== '');
-      
-      if (iocArray.length === 0) {
-        setStatus('❌ Please enter at least one IOC');
-        setLoading(false);
-        return;
-      }
+      console.log('=== SUBMISSION START ===');
+      console.log('Address:', address);
+      console.log('Network:', currentNetwork?.name);
+      console.log('Registered:', isRegistered);
 
-      const iocData = {
-        format: format.toUpperCase(),
-        iocs: iocArray,
-        metadata: {
-          source: await signer.getAddress(),
-          timestamp: new Date().toISOString(),
-          privacyMode: privacy
-        }
-      };
+      // Parse IOCs
+      setStatus('📝 Parsing IOCs...');
+      const iocs = iocInput.split('\n').map(l => l.trim()).filter(l => l);
+      if (iocs.length === 0) throw new Error('No valid IOCs');
 
-      setStatus(`📤 Uploading ${iocArray.length} IOCs to IPFS (Pinata)...`);
-
-      const leaves = iocArray.map(x => keccak256(x));
+      // Generate Merkle tree
+      setStatus('🌳 Generating Merkle tree...');
+      const leaves = iocs.map(ioc => keccak256(ioc));
       const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
-      const root = tree.getHexRoot();
+      const merkleRootHash = '0x' + tree.getRoot().toString('hex');
+      setMerkleRoot(merkleRootHash);
 
-      const cid = await uploadToIPFS(iocData);
+      // Upload to IPFS
+      setStatus('📤 Uploading to IPFS...');
+      const uploadRes = await fetch('/api/pinata-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: "1.0",
+          format: "cti-ioc-batch",
+          timestamp: new Date().toISOString(),
+          iocs: iocs,
+          metadata: {
+            source: privacyMode === 'anonymous' ? 'anonymous' : address,
+            network: currentNetwork.name,
+            merkleRoot: merkleRootHash
+          }
+        })
+      });
       
-      setStatus(`✅ IPFS: ${cid.toString().substring(0, 20)}...`);
-      setStatus('⛓️ Submitting to blockchain...');
-
-      const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
-      const registryABI = [
-        "function registerContributor() external payable",
-        "function addBatch(string memory cid, bytes32 merkleRoot, bool isPublic, bytes32 zkpCommitment, bytes memory zkpProof) public",
-        "function contributors(address) external view returns (uint256, uint256, uint256, uint256, bool, uint256)",
-        "function getPlatformStats() external view returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256)"
-      ];
-
-      const registry = new ethers.Contract(registryAddress, registryABI, signer);
-
-      const contributor = await registry.contributors(await signer.getAddress());
-      const currentIsRegistered = contributor[4];
-
-      if (!currentIsRegistered) {
-        setStatus('🔐 Registering as contributor (0.05 ETH stake)...');
-        const regTx = await registry.registerContributor({ 
-          value: ethers.parseEther("0.05") 
-        });
-        await regTx.wait();
-        setStatus('✅ Contributor registered');
-        setIsRegistered(true);
+      if (!uploadRes.ok) {
+        throw new Error(`IPFS upload failed: ${uploadRes.status}`);
       }
+      
+      const upload = await uploadRes.json();
+      
+      if (!upload.success || !upload.cid) {
+        throw new Error(`IPFS failed: ${upload.error || 'No CID'}`);
+      }
+      
+      const cid = upload.cid;
+      setIpfsCid(cid);
+      console.log('IPFS CID:', cid);
 
-      const tx = await registry.addBatch(
-        cid,
-        root,
-        true,
-        ethers.ZeroHash,
-        "0x"
+      // Create registry contract
+      registry = new ethers.Contract(
+        currentNetwork.contracts.registry,
+        [
+          "function registerContributor(uint256 tier) external payable",
+          "function contributors(address) view returns (uint256,uint256,uint256,uint256,uint256,bool,uint256)",
+          "function addBatch(string memory cid, bytes32 merkleRoot, bool isPublic, bytes32 zkpCommitment, bytes memory zkpProof) public payable",
+          "function STANDARD_STAKE() view returns (uint256)"
+        ],
+        signer
       );
 
-      setStatus('⏳ Waiting for confirmation...');
-      await tx.wait();
+      console.log('Registry:', registry.target);
 
-      setStatus(`✅ Success! ${iocArray.length} IOCs submitted\n📦 CID: ${cid}\n🔗 Root: ${root.substring(0, 20)}...`);
-      
-      setIocs('');
+      // Check registration
+      const data = await registry.contributors(address);
+      const needsReg = !data[5];
+
+      // Register if needed
+      if (needsReg) {
+        setStatus('📝 Registering...');
+        const standardStake = await registry.STANDARD_STAKE();
+        console.log('Registering with:', ethers.formatEther(standardStake), 'ETH');
+        
+        const regTx = await registry.registerContributor(
+          standardStake,
+          { value: standardStake, gasLimit: 200000 }
+        );
+        
+        setStatus(`⏳ ${regTx.hash.substring(0, 10)}...`);
+        await regTx.wait();
+        setStatus('✅ Registered! Submitting batch...');
+        await new Promise(r => setTimeout(r, 2000));
+      }
+
+      // Submit batch
+      if (privacyMode === 'anonymous' && currentNetwork.chainId === 421614 && zkpReady && isInTree) {
+        // ANONYMOUS SUBMISSION (L2 only)
+        setStatus('🔐 Generating ZK proof...');
+        const zkp = zkProver.generateProof(address);
+        
+        if (!zkp?.proof || !zkp?.leaf || !zkp?.commitment) {
+          throw new Error('ZKP generation failed');
+        }
+        
+        const merkleZK = new ethers.Contract(
+          currentNetwork.contracts.merkleZK,
+          ["function submitBatchAnonymous(string memory cid, bytes32 batchMerkleRoot, bytes32 commitment, bytes32[] memory contributorProof, bytes32 contributorLeaf) external payable"],
+          signer
+        );
+        
+        // ✅ Calculate submission fee using maxFeePerGas
+        const feeData = await provider.getFeeData();
+        const txGasPrice = feeData.maxFeePerGas || feeData.gasPrice || ethers.parseUnits("0.1", "gwei");
+        
+        const estimatedGas = 200000n;
+        const gasCost = estimatedGas * txGasPrice;
+        const submissionFee = (gasCost * 1n) / 100n;
+        const submissionFeeWithMargin = (submissionFee * 2n) / 1n; // 2x for anonymous
+        
+        console.log('=== ANONYMOUS SUBMISSION FEE ===');
+        console.log('maxFeePerGas:', ethers.formatUnits(txGasPrice, 'gwei'), 'Gwei');
+        console.log('Base fee (1%):', ethers.formatEther(submissionFee), 'ETH');
+        console.log('With 2x margin:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
+        
+        setStatus('📡 Submitting anonymously...');
+        const tx = await merkleZK.submitBatchAnonymous(
+          cid, 
+          merkleRootHash, 
+          zkp.commitment, 
+          zkp.proof, 
+          zkp.leaf, 
+          { 
+            value: submissionFeeWithMargin,
+            gasLimit: 450000 
+          }
+        );
+        
+        setTxHash(tx.hash);
+        setStatus(`⏳ ${tx.hash.substring(0, 10)}...`);
+        await tx.wait();
+        setStatus(`✅ Anonymous batch submitted! Hidden among ${zkp.anonymitySetSize} contributors 🎭`);
+        
+      } else {
+        // PUBLIC SUBMISSION
+        setStatus('📡 Submitting batch...');
+        
+        if (!cid || !merkleRootHash) {
+          throw new Error('Missing CID or Merkle root');
+        }
+        
+        const zkpCommitment = ethers.keccak256(ethers.toUtf8Bytes(address.toLowerCase()));
+        
+        // ✅ CRITICAL FIX: Use maxFeePerGas (matches tx.gasprice in contract)
+        const feeData = await provider.getFeeData();
+        console.log('Raw feeData:', {
+          gasPrice: feeData.gasPrice?.toString(),
+          maxFeePerGas: feeData.maxFeePerGas?.toString(),
+          maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString()
+        });
+        
+        // Use maxFeePerGas because that's what tx.gasprice will be
+        const txGasPrice = feeData.maxFeePerGas || feeData.gasPrice || ethers.parseUnits("2", "gwei");
+        
+        const estimatedGas = 200000n;
+        const gasCost = estimatedGas * txGasPrice;
+        const submissionFee = (gasCost * 1n) / 100n; // 1% of gas cost
+        
+        // ✅ Safety margin: 2x for L1 (volatile), 1.5x for L2 (stable)
+        const safetyMultiplier = currentNetwork.chainId === 11155111 ? 20n : 15n;
+        const safetyDivisor = 10n;
+        const submissionFeeWithMargin = (submissionFee * safetyMultiplier) / safetyDivisor;
+        
+        console.log('=== PUBLIC SUBMISSION FEE CALCULATION ===');
+        console.log('Network:', currentNetwork.name, '(ChainID:', currentNetwork.chainId + ')');
+        console.log('maxFeePerGas (wei):', txGasPrice.toString());
+        console.log('maxFeePerGas (gwei):', ethers.formatUnits(txGasPrice, 'gwei'));
+        console.log('Estimated gas:', estimatedGas.toString());
+        console.log('Total gas cost (wei):', gasCost.toString());
+        console.log('Total gas cost (ETH):', ethers.formatEther(gasCost));
+        console.log('1% submission fee (wei):', submissionFee.toString());
+        console.log('1% submission fee (ETH):', ethers.formatEther(submissionFee));
+        console.log('Safety multiplier:', currentNetwork.chainId === 11155111 ? '2x' : '1.5x');
+        console.log('Final fee with margin (wei):', submissionFeeWithMargin.toString());
+        console.log('Final fee with margin (ETH):', ethers.formatEther(submissionFeeWithMargin));
+        console.log('=========================================');
+        
+        console.log('Calling addBatch with params:', {
+          cid,
+          merkleRoot: merkleRootHash,
+          isPublic: true,
+          zkpCommitment,
+          zkpProof: '0x00',
+          value: ethers.formatEther(submissionFeeWithMargin) + ' ETH'
+        });
+        
+        const tx = await registry.addBatch(
+          cid, 
+          merkleRootHash, 
+          true, 
+          zkpCommitment, 
+          '0x00', 
+          { 
+            value: submissionFeeWithMargin,  // ✅ Calculated with proper safety margin
+            gasLimit: 350000,
+            maxFeePerGas: txGasPrice,  // ✅ Explicitly set to match fee calculation
+            maxPriorityFeePerGas: feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei")
+          }
+        );
+        
+        setTxHash(tx.hash);
+        setStatus(`⏳ Batch TX: ${tx.hash.substring(0, 10)}...`);
+        console.log('TX hash:', tx.hash);
+        console.log('TX sent with maxFeePerGas:', ethers.formatUnits(txGasPrice, 'gwei'), 'Gwei');
+        
+        const receipt = await tx.wait();
+        console.log('✅ Confirmed!');
+        console.log('Gas used:', receipt.gasUsed.toString());
+        console.log('Effective gas price:', ethers.formatUnits(receipt.gasPrice, 'gwei'), 'Gwei');
+        console.log('Total gas cost:', ethers.formatEther(receipt.gasUsed * receipt.gasPrice), 'ETH');
+        
+        setStatus(`✅ Batch submitted successfully! ${needsReg ? 'You are now a registered contributor! 🎉' : ''}`);
+      }
+
+      await checkBalance();
+      await checkRegistrationStatus();
+
+      if (needsReg) {
+        setStatus(prev => prev + '\n\n💡 Anonymous mode available after next tree update (2 AM UTC).');
+      }
 
     } catch (error) {
-      console.error(error);
-      setStatus(`❌ Error: ${error.message}`);
+      console.error("ERROR:", error);
+      
+      if (error.message?.includes('IPFS')) {
+        setStatus(`❌ IPFS upload failed`);
+      } else if (error.message?.includes('Not active public contributor')) {
+        setStatus('❌ Not registered. Please register first.');
+      } else if (error.code === 'ACTION_REJECTED') {
+        setStatus('❌ Transaction cancelled');
+      } else if (error.message?.includes('Insufficient submission fee')) {
+        setStatus('❌ Insufficient submission fee. Network gas price may have spiked. Try again.');
+      } else {
+        setStatus(`❌ ${error?.shortMessage || error?.message || 'Failed'}`);
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  // Calculate IOC count for gas estimator
-  const iocArray = iocs.split('\n').map(line => line.trim()).filter(line => line !== '');
-  const iocCount = iocArray.length;
+  const canAffordSubmission = () => {
+    if (!walletBalance) return false;
+    const balance = parseFloat(walletBalance);
+    const stake = isRegistered ? 0 : parseFloat(STAKING_TIERS[selectedTier].amount);
+    const submissionFee = currentNetwork?.chainId === 11155111 ? 0.001 : 0.0003; // Estimated with margin
+    const estimatedGas = currentNetwork?.chainId === 11155111 ? 0.003 : 0.0005;
+    return balance >= (stake + submissionFee + estimatedGas);
+  };
+
+  const getRequiredAmount = () => {
+    const stake = isRegistered ? 0 : parseFloat(STAKING_TIERS[selectedTier].amount);
+    const submissionFee = currentNetwork?.chainId === 11155111 ? 0.001 : 0.0003;
+    const gas = currentNetwork?.chainId === 11155111 ? 0.003 : 0.0005;
+    return (stake + submissionFee + gas).toFixed(4);
+  };
+
+  const canSubmitAnonymously = () => {
+    return currentNetwork?.chainId === 421614 && isRegistered && zkpReady && isInTree;
+  };
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
         
+        <div className="mb-6">
+          <h2 className="text-3xl font-bold text-white mb-2">🚀 Submit IOC Batch</h2>
+          <p className="text-gray-400">Share threat intelligence with the community</p>
+        </div>
+
         {!walletConnected ? (
           <div className="text-center py-12">
             <div className="mb-6">
@@ -176,7 +493,7 @@ export default function IOCSubmissionForm() {
                 <span className="text-4xl">🔐</span>
               </div>
               <h3 className="text-2xl font-bold text-white mb-2">Connect Your Wallet</h3>
-              <p className="text-gray-400">Connect MetaMask to start submitting threat intelligence</p>
+              <p className="text-gray-400">Connect MetaMask to submit IOC batches</p>
             </div>
             
             <button
@@ -188,171 +505,408 @@ export default function IOCSubmissionForm() {
           </div>
         ) : (
           <>
-            <div className="mb-6 p-4 bg-gray-900/50 rounded-xl border border-gray-700 flex justify-between items-center">
-              <div>
-                <span className="text-gray-400 text-sm">Connected Wallet</span>
-                <p className="text-purple-400 font-mono text-sm">
-                  {walletAddress.substring(0, 6)}...{walletAddress.substring(38)}
-                </p>
+            <div className="mb-6 p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+              <div className="flex justify-between items-center mb-3">
+                <div>
+                  <span className="text-gray-400 text-sm">Connected Wallet</span>
+                  <p className="text-purple-400 font-mono text-sm">
+                    {walletAddress.substring(0, 10)}...{walletAddress.substring(38)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-gray-400 text-sm">Balance</span>
+                  <p className={`font-mono text-sm font-bold ${
+                    parseFloat(walletBalance) < 0.01 ? 'text-red-400' : 'text-green-400'
+                  }`}>
+                    {parseFloat(walletBalance).toFixed(4)} ETH
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span className="text-green-400 text-sm">Active</span>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => switchNetwork(NETWORKS.sepolia)}
+                  disabled={currentNetwork?.chainId === 11155111}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    currentNetwork?.chainId === 11155111
+                      ? 'bg-blue-500/30 text-blue-300 border border-blue-500/50'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                  }`}
+                >
+                  🌐 Ethereum Sepolia
+                </button>
+                
+                <button
+                  onClick={() => switchNetwork(NETWORKS.arbitrumSepolia)}
+                  disabled={currentNetwork?.chainId === 421614}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-semibold transition-all ${
+                    currentNetwork?.chainId === 421614
+                      ? 'bg-purple-500/30 text-purple-300 border border-purple-500/50'
+                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                  }`}
+                >
+                  ⚡ Arbitrum Sepolia
+                </button>
               </div>
             </div>
+
+            {isRegistered && contributorInfo && (
+              <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">✅</span>
+                  <div>
+                    <p className="text-green-300 font-semibold">Registered Contributor</p>
+                    <p className="text-gray-400 text-sm">
+                      {contributorInfo.tier} Tier • {contributorInfo.submissionCount} submissions • {contributorInfo.reputationScore} reputation
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!isRegistered && (
+              <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">ℹ️</span>
+                  <div className="text-sm text-gray-400">
+                    <p className="font-semibold text-blue-300 mb-1">First Submission - 2-Step Process</p>
+                    <p>Step 1: Register as contributor (stake {STAKING_TIERS[selectedTier].amount} ETH)</p>
+                    <p>Step 2: Submit your first batch (small fee + gas)</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!canAffordSubmission() && (
+              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">⚠️</span>
+                  <div className="text-sm text-red-300">
+                    <p className="font-semibold mb-1">Insufficient Balance</p>
+                    <p>Need <span className="font-bold">{getRequiredAmount()} ETH</span> but have <span className="font-bold">{parseFloat(walletBalance).toFixed(4)} ETH</span></p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {privacyMode === 'anonymous' && currentNetwork?.chainId === 421614 && isRegistered && (
+              <div className="mb-6">
+                {zkpLoading ? (
+                  <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
+                      <div>
+                        <p className="text-blue-300 font-semibold">Loading ZKP System...</p>
+                        <p className="text-gray-400 text-sm">Fetching contributor Merkle tree...</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : zkpReady && isInTree ? (
+                  <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">🔐</span>
+                      <div className="flex-1">
+                        <p className="text-green-300 font-semibold">Anonymous Mode Ready</p>
+                        <p className="text-gray-400 text-sm">
+                          Your submission will be hidden among <span className="text-green-400 font-bold">{anonymitySetSize}</span> registered contributors
+                        </p>
+                        {treeAge && (
+                          <p className="text-gray-500 text-xs mt-1">
+                            Tree updated: {treeAge.lastUpdate} ({treeAge.ageHours}h ago)
+                            {treeAge.isStale && <span className="text-yellow-400"> ⚠️ Stale</span>}
+                          </p>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs text-gray-500 mb-1">Privacy</div>
+                        <div className="text-green-400 font-bold text-lg">95%</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : zkpReady && !isInTree ? (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">⏳</span>
+                      <div>
+                        <p className="text-yellow-300 font-semibold">Not Yet in Anonymous Tree</p>
+                        <p className="text-gray-400 text-sm">
+                          You are registered but not in the latest Merkle tree. Anonymous submissions available after next daily update (2 AM UTC).
+                        </p>
+                        <p className="text-gray-500 text-xs mt-1">
+                          You can submit in public mode now, or wait up to 24 hours.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">❌</span>
+                      <div>
+                        <p className="text-red-300 font-semibold">ZKP System Unavailable</p>
+                        <p className="text-gray-400 text-sm">Cannot load contributor tree. Use public mode or try again later.</p>
+                        <button
+                          onClick={loadZKPTree}
+                          className="mt-2 text-sm text-blue-400 hover:text-blue-300 font-semibold"
+                        >
+                          🔄 Retry Loading Tree
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {privacyMode === 'anonymous' && currentNetwork?.chainId !== 421614 && (
+              <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl mb-6">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">⚠️</span>
+                  <div>
+                    <p className="text-yellow-300 font-semibold">ZKP Only Available on Arbitrum L2</p>
+                    <p className="text-gray-400 text-sm mb-2">
+                      Anonymous submissions are only supported on Arbitrum Sepolia to minimize costs.
+                    </p>
+                    <button
+                      onClick={() => switchNetwork(NETWORKS.arbitrumSepolia)}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold rounded-lg transition-all"
+                    >
+                      ⚡ Switch to Arbitrum L2
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
               
+              {!isRegistered && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-300 mb-3">
+                    💎 Select Staking Tier
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {Object.entries(STAKING_TIERS).map(([key, tier]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedTier(key)}
+                        className={`p-4 rounded-xl border-2 transition-all ${
+                          selectedTier === key
+                            ? 'border-purple-500 bg-purple-500/20'
+                            : 'border-gray-600 bg-gray-900/30 hover:border-gray-500'
+                        }`}
+                      >
+                        <div className="text-center">
+                          <p className="text-white font-bold mb-1">{tier.label}</p>
+                          <p className="text-purple-400 text-2xl font-bold mb-1">{tier.amount} ETH</p>
+                          <p className="text-gray-400 text-xs">+{tier.reputationBonus} reputation</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-semibold text-gray-300 mb-3">
-                  📋 Indicators of Compromise (IOCs)
+                  📝 Enter IOCs (One Per Line)
                 </label>
                 <textarea
-                  value={iocs}
-                  onChange={(e) => setIocs(e.target.value)}
-                  className="w-full h-48 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-100 placeholder-gray-500 font-mono text-sm transition-all"
-                  placeholder="malicious-domain.com&#10;192.168.100.50&#10;a1b2c3d4e5f67890abcdef1234567890&#10;phishing-site.org"
+                  value={iocInput}
+                  onChange={(e) => setIocInput(e.target.value)}
+                  placeholder="malicious-domain.com&#10;192.168.1.100&#10;5d41402abc4b2a76b9719d911017c592&#10;http://phishing-site.xyz"
+                  rows={8}
+                  className="w-full px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono text-sm"
                   disabled={loading}
                 />
                 <p className="mt-2 text-sm text-gray-500">
-                  💡 Enter one IOC per line. Supports domains, IPs, MD5/SHA-256 hashes
+                  {iocInput.split('\n').filter(l => l.trim()).length} IOCs entered
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
-                <div>
-                  <label className="block text-sm font-semibold text-gray-300 mb-3">
-                    📄 Format
-                  </label>
-                  <select
-                    value={format}
-                    onChange={(e) => setFormat(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 transition-all"
-                    disabled={loading}
+              <div>
+                <label className="block text-sm font-semibold text-gray-300 mb-3">
+                  🔒 Privacy Mode
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setPrivacyMode('public')}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      privacyMode === 'public'
+                        ? 'border-blue-500 bg-blue-500/20'
+                        : 'border-gray-600 bg-gray-900/30 hover:border-gray-500'
+                    }`}
                   >
-                    <option value="flat">Flat IOCs</option>
-                    <option value="stix">STIX 2.1 Format</option>
-                  </select>
-                </div>
+                    <div className="text-center">
+                      <span className="text-3xl block mb-2">🌐</span>
+                      <p className="text-white font-bold mb-1">Public Identity</p>
+                      <p className="text-gray-400 text-xs">Your address will be visible</p>
+                    </div>
+                  </button>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-300 mb-3">
-                    🔒 Privacy Mode
-                  </label>
-                  <select
-                    value={privacy}
-                    onChange={(e) => setPrivacy(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 transition-all"
-                    disabled={loading}
+                  <button
+                    type="button"
+                    onClick={() => setPrivacyMode('anonymous')}
+                    disabled={!isRegistered}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      privacyMode === 'anonymous'
+                        ? 'border-purple-500 bg-purple-500/20'
+                        : !isRegistered 
+                        ? 'border-gray-700 bg-gray-900/20 opacity-50 cursor-not-allowed'
+                        : 'border-gray-600 bg-gray-900/30 hover:border-gray-500'
+                    }`}
                   >
-                    <option value="public">🌐 Public (Identity Visible)</option>
-                    <option value="anonymous">👤 Anonymous (256-bit ZKP)</option>
-                  </select>
+                    <div className="text-center">
+                      <span className="text-3xl block mb-2">🔒</span>
+                      <p className="text-white font-bold mb-1">Anonymous (ZKP)</p>
+                      <p className="text-gray-400 text-xs">
+                        {!isRegistered ? 'Register first to unlock' : 'Identity hidden via zero-knowledge proof'}
+                      </p>
+                    </div>
+                  </button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-                  <div className="text-blue-400 text-2xl mb-2">🔗</div>
-                  <div className="text-sm text-gray-400">IPFS Storage (Pinata)</div>
-                  <div className="text-xs text-gray-500 mt-1">Distributed & Immutable</div>
-                </div>
-                
-                <div className="p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
-                  <div className="text-purple-400 text-2xl mb-2">🛡️</div>
-                  <div className="text-sm text-gray-400">Merkle Proofs</div>
-                  <div className="text-xs text-gray-500 mt-1">Cryptographic Verification</div>
-                </div>
-                
-                <div className="p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl">
-                  <div className="text-pink-400 text-2xl mb-2">⚡</div>
-                  <div className="text-sm text-gray-400">Multi-Sig DAO</div>
-                  <div className="text-xs text-gray-500 mt-1">Decentralized Approval</div>
+              <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-700">
+                <h3 className="text-white font-semibold mb-3">💰 Cost Breakdown</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">
+                      {isRegistered ? 'Registration:' : `${STAKING_TIERS[selectedTier].label} Stake:`}
+                    </span>
+                    <span className="text-white font-mono">
+                      {isRegistered ? '0.000 ETH (Already Registered ✅)' : `${STAKING_TIERS[selectedTier].amount} ETH`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Submission Fee (1-2%):</span>
+                    <span className="text-white font-mono">
+                      ~{currentNetwork?.chainId === 11155111 ? '0.001' : '0.0003'} ETH
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Estimated Gas:</span>
+                    <span className="text-white font-mono">
+                      ~{currentNetwork?.chainId === 11155111 ? '0.003' : '0.0005'} ETH
+                    </span>
+                  </div>
+                  {privacyMode === 'anonymous' && currentNetwork?.chainId === 421614 && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">ZK Verification:</span>
+                      <span className="text-purple-400 font-mono">+0.0002 ETH</span>
+                    </div>
+                  )}
+                  <div className="border-t border-gray-700 pt-2 flex justify-between items-center">
+                    <span className="text-white font-semibold">Total Required:</span>
+                    <span className={`font-mono font-bold ${canAffordSubmission() ? 'text-green-400' : 'text-red-400'}`}>
+                      {getRequiredAmount()} ETH
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-500">Your Balance:</span>
+                    <span className={`font-mono ${parseFloat(walletBalance) >= parseFloat(getRequiredAmount()) ? 'text-green-400' : 'text-red-400'}`}>
+                      {parseFloat(walletBalance).toFixed(4)} ETH
+                    </span>
+                  </div>
+                  {!isRegistered && (
+                    <div className="mt-2 p-2 bg-blue-500/10 rounded-lg">
+                      <p className="text-xs text-blue-300">
+                        ⚡ Two transactions required: (1) Registration → (2) Batch submission
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
-
-              {/* GAS COST ESTIMATOR - INTEGRATED HERE */}
-              {iocCount > 0 && (
-                <GasCostEstimator 
-                  operation={!isRegistered ? "registerContributor" : "addBatch"} 
-                  iocCount={iocCount}
-                />
-              )}
 
               <button
                 type="submit"
-                disabled={loading}
-                className={`w-full py-4 px-6 rounded-xl font-bold text-lg transition-all transform ${
-                  loading 
-                    ? 'bg-gray-700 cursor-not-allowed text-gray-500' 
-                    : 'bg-gradient-to-r from-purple-600 via-blue-600 to-pink-600 hover:from-purple-700 hover:via-blue-700 hover:to-pink-700 text-white shadow-lg hover:shadow-purple-500/50 hover:scale-[1.02]'
+                disabled={loading || !iocInput.trim() || !canAffordSubmission()}
+                className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${
+                  loading || !iocInput.trim() || !canAffordSubmission()
+                    ? 'bg-gray-700 cursor-not-allowed text-gray-500'
+                    : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white transform hover:scale-105'
                 }`}
               >
-                {loading ? (
-                  <span className="flex items-center justify-center gap-3">
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    Processing...
-                  </span>
-                ) : (
-                  '🚀 Submit to Blockchain'
-                )}
+                {loading ? '⏳ Processing...' : 
+                 !canAffordSubmission() ? '❌ Insufficient Balance' :
+                 isRegistered ? (privacyMode === 'anonymous' && canSubmitAnonymously() ? '🔒 Submit Anonymously' : '🚀 Submit Batch') : 
+                 '🚀 Register & Submit (2 TXs)'}
               </button>
-
-              {status && (
-                <div className={`p-6 rounded-xl border backdrop-blur-sm ${
-                  status.includes('❌') 
-                    ? 'bg-red-500/10 border-red-500/30 text-red-300' :
-                  status.includes('✅') 
-                    ? 'bg-green-500/10 border-green-500/30 text-green-300' :
-                    'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                }`}>
-                  <p className="whitespace-pre-wrap font-mono text-sm leading-relaxed">{status}</p>
-                </div>
-              )}
             </form>
+
+            {status && (
+              <div className={`mt-6 p-4 rounded-xl border ${
+                status.includes('✅') ? 'bg-green-500/10 border-green-500/30 text-green-300' :
+                status.includes('❌') ? 'bg-red-500/10 border-red-500/30 text-red-300' :
+                status.includes('⚠️') ? 'bg-yellow-500/10 border-yellow-500/30 text-yellow-300' :
+                'bg-blue-500/10 border-blue-500/30 text-blue-300'
+              }`}>
+                <p className="font-semibold whitespace-pre-wrap">{status}</p>
+              </div>
+            )}
+
+            {(merkleRoot || ipfsCid || txHash) && (
+              <div className="mt-6 space-y-3">
+                {ipfsCid && (
+                  <div className="p-3 bg-gray-900/50 rounded-lg">
+                    <p className="text-gray-400 text-xs mb-1">IPFS CID:</p>
+                    <p className="text-blue-400 font-mono text-sm break-all">{ipfsCid}</p>
+                  </div>
+                )}
+                
+                {merkleRoot && (
+                  <div className="p-3 bg-gray-900/50 rounded-lg">
+                    <p className="text-gray-400 text-xs mb-1">Merkle Root:</p>
+                    <p className="text-green-400 font-mono text-sm break-all">{merkleRoot}</p>
+                  </div>
+                )}
+                
+                {txHash && (
+                  <div className="p-3 bg-gray-900/50 rounded-lg">
+                    <p className="text-gray-400 text-xs mb-1">Transaction Hash:</p>
+                    <a
+                      href={`${currentNetwork.explorerUrl}/tx/${txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-purple-400 hover:text-purple-300 font-mono text-sm break-all underline"
+                    >
+                      {txHash}
+                    </a>
+                  </div>
+                )}
+                
+                {privacyMode === 'anonymous' && anonymitySetSize > 0 && (
+                  <div className="p-3 bg-purple-900/50 rounded-lg border border-purple-500/30">
+                    <p className="text-gray-400 text-xs mb-1">🎭 Anonymity Protection:</p>
+                    <p className="text-purple-300 text-sm">
+                      Your identity is hidden among <span className="font-bold text-purple-400">{anonymitySetSize}</span> registered contributors
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+              <div className="flex items-start gap-3">
+                <span className="text-blue-400 text-xl">ℹ️</span>
+                <div className="text-sm text-gray-400">
+                  <p className="font-semibold text-blue-300 mb-1">How It Works</p>
+                  <ul className="space-y-1 text-xs">
+                    <li>• {isRegistered ? 'Registered contributors pay dynamic submission fee (1-2% of gas) + gas' : 'First submission: Register (stake) → Submit (fee + gas)'}</li>
+                    <li>• IOCs are hashed into a Merkle tree for cryptographic verification</li>
+                    <li>• Data is uploaded to IPFS (decentralized storage)</li>
+                    <li>• Batch requires 3/3 admin approvals before becoming queryable</li>
+                    {privacyMode === 'anonymous' && currentNetwork?.chainId === 421614 && (
+                      <li>• <span className="text-purple-400 font-semibold">Anonymous mode uses Merkle tree zero-knowledge proofs to hide your identity</span></li>
+                    )}
+                  </ul>
+                </div>
+              </div>
+            </div>
           </>
         )}
-
-        <div className="mt-8 p-6 bg-gray-900/30 backdrop-blur-sm rounded-xl border border-gray-700">
-          <h3 className="font-bold text-white mb-4 flex items-center gap-2">
-            <span className="text-xl">⚙️</span>
-            How It Works
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-2 bg-purple-500/20 rounded-full flex items-center justify-center text-purple-400 font-bold">1</div>
-              <p className="text-gray-400">Connect Wallet</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-2 bg-blue-500/20 rounded-full flex items-center justify-center text-blue-400 font-bold">2</div>
-              <p className="text-gray-400">Enter IOCs</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-2 bg-green-500/20 rounded-full flex items-center justify-center text-green-400 font-bold">3</div>
-              <p className="text-gray-400">Upload to IPFS</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-2 bg-yellow-500/20 rounded-full flex items-center justify-center text-yellow-400 font-bold">4</div>
-              <p className="text-gray-400">Generate Proof</p>
-            </div>
-            <div className="text-center">
-              <div className="w-12 h-12 mx-auto mb-2 bg-pink-500/20 rounded-full flex items-center justify-center text-pink-400 font-bold">5</div>
-              <p className="text-gray-400">Submit On-Chain</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-6 flex items-center justify-center gap-3 text-sm">
-          <div className="px-4 py-2 bg-green-500/10 border border-green-500/30 rounded-full text-green-400 flex items-center gap-2">
-            <span>🔐</span>
-            <span>256-bit Encryption</span>
-          </div>
-          <div className="px-4 py-2 bg-purple-500/10 border border-purple-500/30 rounded-full text-purple-400 flex items-center gap-2">
-            <span>⚡</span>
-            <span>Low Gas Costs</span>
-          </div>
-        </div>
       </div>
     </div>
   );

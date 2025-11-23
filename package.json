@@ -1,26 +1,40 @@
 {
   "name": "blockchain-dev",
   "version": "1.0.0",
-  "description": "",
+  "description": "CTI Platform - Decentralized Threat Intelligence",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "oracle": "node scripts/oracle-service.js",
+    "oracle:dev": "nodemon scripts/oracle-service.js",
+    "oracle:pm2": "pm2 start scripts/oracle-service.js --name cti-oracle",
+    "oracle:stop": "pm2 stop cti-oracle",
+    "oracle:logs": "pm2 logs cti-oracle"
   },
-  "keywords": [],
+  "keywords": [
+    "blockchain",
+    "cti",
+    "threat-intelligence",
+    "ethereum",
+    "arbitrum"
+  ],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
-    "hardhat": "^2.26.3"
+    "@openzeppelin/contracts": "^5.4.0",
+    "hardhat": "^2.26.3",
+    "nodemon": "^3.0.2"
   },
   "dependencies": {
     "@iden3/binfileutils": "^0.0.12",
-    "@openzeppelin/contracts": "^5.4.0",
+    "axios": "^1.6.5",
     "circomlib": "^2.0.5",
     "dotenv": "^17.2.3",
     "ipfs-http-client": "^56.0.3",
     "keccak256": "^1.0.6",
     "merkletreejs": "^0.6.0",
+    "node-cron": "^3.0.3",
     "snarkjs": "^0.7.5",
     "stix2": "^1.1.0"
   }

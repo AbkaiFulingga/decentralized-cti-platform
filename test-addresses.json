@@ -1,11 +1,35 @@
 {
-  "PrivacyPreservingRegistry": "0xD63e502605B0B48626bF979c66B68026a35DbA36",
-  "ThresholdGovernance": "0x2b86E798F7677d40b90Bd92BeA2e722cb36341fe",
+  "network": "sepolia",
+  "chainId": "11155111",
+  "PrivacyPreservingRegistry": "0xea816C1B93F5d76e03055BFcFE2ba5645341e09E",
+  "ThresholdGovernance": "0xfE4aDfFA3C1d855b21161B1f38167eC5c3C0d919",
+  "StorageContribution": "0x6032c74688Be90A9E91d770bCe2d5D07d219ebDd",
   "admins": [
     "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82",
-    "0xe23DC0Fc1BD0B8bA9e1B7BFAF746d4FB766dbB0A",
-    "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82"
+    "0xf78afa5E41eDF35c05c1aEB082C1789283b09d3B",
+    "0x0D5CaD75D37adA5A81EbEe04387229a40B0a457f"
   ],
   "threshold": 2,
-  "deployedAt": "2025-10-12T09:31:49.939Z"
+  "features": {
+    "tieredStaking": true,
+    "adminRewards": true,
+    "communityFeedback": true,
+    "badActorDetection": true,
+    "storageContribution": true
+  },
+  "stakingTiers": {
+    "micro": {
+      "amount": "0.01",
+      "reputationBonus": 7
+    },
+    "standard": {
+      "amount": "0.05",
+      "reputationBonus": 10
+    },
+    "premium": {
+      "amount": "0.1",
+      "reputationBonus": 15
+    }
+  },
+  "deployedAt": "2025-11-02T19:40:25.268Z"
 }

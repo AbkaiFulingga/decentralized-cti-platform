@@ -1,0 +1,35 @@
+{
+  "network": "arbitrumSepolia",
+  "chainId": "421614",
+  "PrivacyPreservingRegistry": "0x2Ae7d8E4801a95D1243d1BD7131046F778Af5f6E",
+  "ThresholdGovernance": "0x759eC9e57D8aE5c34de304D3126936bB216668F3",
+  "StorageContribution": "0x958C59e4a2225635043539372e995F17AEE6e50d",
+  "admins": [
+    "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82",
+    "0xf78afa5E41eDF35c05c1aEB082C1789283b09d3B",
+    "0x0D5CaD75D37adA5A81EbEe04387229a40B0a457f"
+  ],
+  "threshold": 2,
+  "features": {
+    "tieredStaking": true,
+    "adminRewards": true,
+    "communityFeedback": true,
+    "badActorDetection": true,
+    "storageContribution": true
+  },
+  "stakingTiers": {
+    "micro": {
+      "amount": "0.01",
+      "reputationBonus": 7
+    },
+    "standard": {
+      "amount": "0.05",
+      "reputationBonus": 10
+    },
+    "premium": {
+      "amount": "0.1",
+      "reputationBonus": 15
+    }
+  },
+  "deployedAt": "2025-11-01T18:20:48.835Z"
+}

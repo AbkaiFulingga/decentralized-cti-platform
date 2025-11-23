@@ -1,0 +1,8 @@
+{
+  "network": "arbitrumSepolia",
+  "merkleZKRegistry": "0xf7750D1B0896c3C0A0C02b87DEF4E88c7Cb46f01",
+  "mainRegistry": "0x2Ae7d8E4801a95D1243d1BD7131046F778Af5f6E",
+  "deployer": "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82",
+  "deployedAt": "2025-11-16T16:15:42.936Z",
+  "blockNumber": 215861533
+}

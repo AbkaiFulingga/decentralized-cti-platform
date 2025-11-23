@@ -1,0 +1,7 @@
+[dotenv@17.2.3] injecting env (27) from .env -- tip: ✅ audit secrets and track compliance: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  suppress all logs with { quiet: true }
+🚀 Starting clean deployment to Arbitrum Sepolia
+Deployer: 0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82
+Balance: 0.641199379901236794 ETH
+
+📜 [1/5] Deploying PrivacyPreservingRegistry...

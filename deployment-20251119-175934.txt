@@ -1,0 +1,63 @@
+[dotenv@17.2.3] injecting env (27) from .env -- tip: 👥 sync secrets across teammates & machines: https://dotenvx.com/ops
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ✅ audit secrets and track compliance: https://dotenvx.com/ops
+🚀 Starting clean deployment to Arbitrum Sepolia
+Deployer: 0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82
+Balance: 0.2944223068000952 ETH
+
+📜 [1/5] Deploying PrivacyPreservingRegistry...
+✅ Registry deployed to: 0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A
+
+📜 [2/5] Deploying ThresholdGovernance...
+✅ Governance deployed to: 0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52
+
+📜 [3/5] Deploying StorageContribution...
+✅ Storage deployed to: 0x177fD44E879a162f3b642b313F253D97bD73a301
+
+📜 [4/5] Deploying MerkleZKRegistry...
+✅ MerkleZK deployed to: 0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1
+
+📜 [5/5] Deploying OracleIOCFeed...
+✅ OracleFeed deployed to: 0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE
+
+════════════════════════════════════════════════════════
+✅ ALL CONTRACTS DEPLOYED SUCCESSFULLY
+════════════════════════════════════════════════════════
+
+📋 CONTRACT ADDRESSES:
+──────────────────────────────────────────────────────
+Registry:     0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A
+Governance:   0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52
+Storage:      0x177fD44E879a162f3b642b313F253D97bD73a301
+MerkleZK:     0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1
+OracleFeed:   0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE
+──────────────────────────────────────────────────────
+
+🔗 ARBISCAN VERIFICATION LINKS:
+Registry:    https://sepolia.arbiscan.io/address/0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A
+Governance:  https://sepolia.arbiscan.io/address/0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52
+Storage:     https://sepolia.arbiscan.io/address/0x177fD44E879a162f3b642b313F253D97bD73a301
+MerkleZK:    https://sepolia.arbiscan.io/address/0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1
+OracleFeed:  https://sepolia.arbiscan.io/address/0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE
+
+📝 UPDATE .env FILE:
+──────────────────────────────────────────────────────
+REGISTRY_ADDRESS=0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A
+GOVERNANCE_ADDRESS=0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52
+STORAGE_ADDRESS=0x177fD44E879a162f3b642b313F253D97bD73a301
+MERKLE_ZK_ADDRESS=0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1
+ORACLE_FEED_ADDRESS=0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE
+
+📝 UPDATE cti-frontend/utils/constants.js:
+──────────────────────────────────────────────────────
+arbitrumSepolia: {
+  contracts: {
+    registry: "0x892AD6E47dbD86aD7855f7eEAe0F4fCa6223C36A",
+    governance: "0xeB09652Ed1a543C5Ec36873C83cAFC3356AAca52",
+    storage: "0x177fD44E879a162f3b642b313F253D97bD73a301",
+    merkleZK: "0x74A2C817dcB3554CD78cF3EEb513Df97751e01d1",
+    oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE"
+  }
+}
+
+⚠️  IMPORTANT: After updating constants.js, restart frontend:
+   cd cti-frontend && rm -rf .next && npm run dev

@@ -3,58 +3,86 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
+import { NETWORKS } from '../utils/constants';
 
 export default function PlatformDashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [currentNetwork, setCurrentNetwork] = useState(null);
+  const [isBrowser, setIsBrowser] = useState(false);
 
   useEffect(() => {
-    loadStats();
-    const interval = setInterval(loadStats, 10000);
-    return () => clearInterval(interval);
+    setIsBrowser(typeof window !== 'undefined');
+  }, []);
+
+  useEffect(() => {
+    if (isBrowser) {
+      loadStats();
+      const interval = setInterval(loadStats, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [isBrowser]);
+
+  // ✅ FIX: Add account/network change listeners
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.ethereum) {
+      const handleAccountChange = () => {
+        console.log('Account changed, reloading stats...');
+        loadStats();
+      };
+
+      const handleChainChange = () => {
+        console.log('Network changed, reloading...');
+        window.location.reload();
+      };
+      
+      window.ethereum.on('accountsChanged', handleAccountChange);
+      window.ethereum.on('chainChanged', handleChainChange);
+      
+      return () => {
+        if (window.ethereum.removeListener) {
+          window.ethereum.removeListener('accountsChanged', handleAccountChange);
+          window.ethereum.removeListener('chainChanged', handleChainChange);
+        }
+      };
+    }
   }, []);
 
   const loadStats = async () => {
     try {
       if (!window.ethereum) {
-        setError('Please install a Web3 wallet');
+        setError('Please install MetaMask');
         setLoading(false);
         return;
       }
 
-      // Create fresh provider with cache-busting
       const provider = new ethers.BrowserProvider(window.ethereum, "any");
-      
-      // Force fresh network query
       await provider.send("eth_chainId", []);
       
       const network = await provider.getNetwork();
       const chainId = network.chainId.toString();
       
-      console.log("=== NETWORK DEBUG ===");
-      console.log("Connected Chain ID:", chainId);
-      console.log("Expected Chain ID: 11155111");
-      
-      if (chainId !== "11155111") {
-        setError(`Wrong network! Your wallet is connected to Chain ID ${chainId}. Please switch to Ethereum Sepolia (Chain ID 11155111)`);
+      // ✅ FIX: Network detection
+      let registryAddress;
+      if (chainId === "11155111") {
+        registryAddress = NETWORKS.sepolia.contracts.registry;
+        setCurrentNetwork(NETWORKS.sepolia);
+      } else if (chainId === "421614") {
+        registryAddress = NETWORKS.arbitrumSepolia.contracts.registry;
+        setCurrentNetwork(NETWORKS.arbitrumSepolia);
+      } else {
+        setError(`Unsupported network (Chain ID: ${chainId}). Please switch to Ethereum Sepolia or Arbitrum Sepolia.`);
         setLoading(false);
         return;
       }
 
-      const registryAddress = "0xD63e502605B0B48626bF979c66B68026a35DbA36";
       const registryABI = [
         "function getPlatformStats() external view returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256)"
       ];
 
       const registry = new ethers.Contract(registryAddress, registryABI, provider);
       const result = await registry.getPlatformStats();
-
-      console.log("=== RAW CONTRACT RESULT ===");
-      console.log("result[0] (totalBatches):", result[0].toString());
-      console.log("result[1] (totalAccepted):", result[1].toString());
-      console.log("result[2] (publicBatches):", result[2].toString());
-      console.log("result[6] (totalStaked):", ethers.formatEther(result[6]));
 
       setStats({
         totalBatches: Number(result[0] || 0),
@@ -74,6 +102,16 @@ export default function PlatformDashboard() {
       setLoading(false);
     }
   };
+
+  if (!isBrowser) {
+    return (
+      <div className="max-w-6xl mx-auto mb-12">
+        <div className="bg-gray-800/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50">
+          <p className="text-gray-400 text-center">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -106,9 +144,17 @@ export default function PlatformDashboard() {
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
             <span>📊</span> Platform Statistics
           </h2>
-          <div className="flex items-center gap-2 text-sm text-gray-400">
-            <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            Live
+          <div className="flex items-center gap-3">
+            <div className="text-right mr-3">
+              <div className="text-xs text-gray-400">Network</div>
+              <div className="text-purple-300 text-sm font-semibold">
+                {currentNetwork?.name || 'Unknown'}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              Live
+            </div>
           </div>
         </div>
 
