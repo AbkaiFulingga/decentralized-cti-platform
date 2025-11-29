@@ -17,10 +17,24 @@ async function main() {
   
   // Load addresses
   const testData = JSON.parse(fs.readFileSync("test-addresses-arbitrum.json"));
-  const merkleZKData = JSON.parse(fs.readFileSync("deployments/merkle-zk-arbitrum.json"));
+  
+  // Use existing MerkleZK from contributor-merkle-tree.json
+  let merkleZKAddress;
+  try {
+    const merkleTreeData = JSON.parse(fs.readFileSync("contributor-merkle-tree.json"));
+    merkleZKAddress = merkleTreeData.merkleZKAddress;
+  } catch (error) {
+    // Fallback to deployments file if it exists
+    try {
+      const merkleZKData = JSON.parse(fs.readFileSync("deployments/merkle-zk-arbitrum.json"));
+      merkleZKAddress = merkleZKData.MerkleZKRegistry;
+    } catch (e) {
+      console.log("❌ Cannot find MerkleZK address in either file");
+      process.exit(1);
+    }
+  }
   
   const registryAddress = testData.PrivacyPreservingRegistry;
-  const merkleZKAddress = merkleZKData.MerkleZKRegistry;
   
   console.log("Registry Address:", registryAddress);
   console.log("MerkleZK Address:", merkleZKAddress);
