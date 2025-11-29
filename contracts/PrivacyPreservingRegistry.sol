@@ -50,6 +50,7 @@ contract PrivacyPreservingRegistry is Ownable {
     mapping(uint256 => CommunityFeedback) public communityFeedback;
     
     address public governance;
+    address public merkleZKRegistry;  // ✅ FIX: Add reference to MerkleZKRegistry
     
     // Tiered staking amounts
     uint256 public constant MICRO_STAKE = 0.01 ether;
@@ -196,10 +197,18 @@ contract PrivacyPreservingRegistry is Ownable {
             contributorHash = bytes32(uint256(uint160(msg.sender)));
             contributors[msg.sender].submissionCount++;
         } else {
-            require(validCommitments[zkpCommitment], "Invalid ZKP commitment");
-            require(verifyAnonymousSubmission(zkpCommitment, zkpProof), "Invalid anonymous proof");
-            contributorHash = zkpCommitment;
-            anonymousContributors[zkpCommitment].submissionCount++;
+            // ✅ FIX: Handle submissions from MerkleZKRegistry differently
+            if (msg.sender == merkleZKRegistry) {
+                // Anonymous submission via MerkleZKRegistry (proof already verified there)
+                contributorHash = zkpCommitment;
+                // Note: Don't increment anonymousContributors - using MerkleZK system instead
+            } else {
+                // Direct anonymous submission (old method)
+                require(validCommitments[zkpCommitment], "Invalid ZKP commitment");
+                require(verifyAnonymousSubmission(zkpCommitment, zkpProof), "Invalid anonymous proof");
+                contributorHash = zkpCommitment;
+                anonymousContributors[zkpCommitment].submissionCount++;
+            }
         }
         
         batches.push(Batch({
@@ -505,6 +514,11 @@ contract PrivacyPreservingRegistry is Ownable {
     
     function setGovernance(address _gov) external onlyOwner {
         governance = _gov;
+    }
+    
+    // ✅ FIX: Set MerkleZKRegistry address
+    function setMerkleZKRegistry(address _merkleZK) external onlyOwner {
+        merkleZKRegistry = _merkleZK;
     }
     
     function getPlatformStats() external view returns (
