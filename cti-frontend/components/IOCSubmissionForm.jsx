@@ -340,6 +340,35 @@ export default function IOCSubmissionForm() {
         
         console.log('Final submission fee:', ethers.formatEther(finalFee), 'ETH');
         
+        // Test with staticCall first to get better error messages
+        console.log('=== TESTING WITH STATICCALL ===');
+        try {
+          await merkleZK.submitBatchAnonymous.staticCall(
+            cid, merkleRootHash, zkp.commitment, zkp.proof, zkp.leaf,
+            { value: finalFee }
+          );
+          console.log('✅ StaticCall passed - transaction should work');
+        } catch (staticError) {
+          console.error('❌ StaticCall failed:', staticError);
+          throw new Error(`StaticCall failed: ${staticError.reason || staticError.message}`);
+        }
+        
+        // Estimate gas
+        console.log('=== ESTIMATING GAS ===');
+        let gasEstimate;
+        try {
+          gasEstimate = await merkleZK.submitBatchAnonymous.estimateGas(
+            cid, merkleRootHash, zkp.commitment, zkp.proof, zkp.leaf,
+            { value: finalFee }
+          );
+          console.log('Gas estimate:', gasEstimate.toString());
+        } catch (gasError) {
+          console.error('❌ Gas estimation failed:', gasError);
+          throw new Error(`Gas estimation failed: ${gasError.reason || gasError.message}`);
+        }
+        
+        // Send transaction with estimated gas + buffer
+        console.log('=== SENDING TRANSACTION ===');
         const tx = await merkleZK.submitBatchAnonymous(
           cid, 
           merkleRootHash, 
@@ -348,7 +377,7 @@ export default function IOCSubmissionForm() {
           zkp.leaf, 
           { 
             value: finalFee,
-            gasLimit: 1000000  // Increased from 500000 to 1M
+            gasLimit: gasEstimate * 120n / 100n  // Use estimate + 20% buffer
           }
         );
         
