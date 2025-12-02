@@ -333,6 +333,13 @@ export default function IOCSubmissionForm() {
         console.log('With 2x margin:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
         
         setStatus('📡 Submitting anonymously...');
+        
+        // Use higher submission fee for L2 (0.001 ETH minimum)
+        const minFee = ethers.parseEther("0.001");
+        const finalFee = submissionFeeWithMargin > minFee ? submissionFeeWithMargin : minFee;
+        
+        console.log('Final submission fee:', ethers.formatEther(finalFee), 'ETH');
+        
         const tx = await merkleZK.submitBatchAnonymous(
           cid, 
           merkleRootHash, 
@@ -340,8 +347,8 @@ export default function IOCSubmissionForm() {
           zkp.proof, 
           zkp.leaf, 
           { 
-            value: submissionFeeWithMargin,
-            gasLimit: 450000 
+            value: finalFee,
+            gasLimit: 500000  // Increased from 450000
           }
         );
         
@@ -439,18 +446,31 @@ export default function IOCSubmissionForm() {
       }
 
     } catch (error) {
-      console.error("ERROR:", error);
+      console.error("=== FULL ERROR DETAILS ===");
+      console.error("Error object:", error);
+      console.error("Error code:", error.code);
+      console.error("Error message:", error.message);
+      console.error("Error reason:", error.reason);
+      console.error("Error data:", error.data);
       
       if (error.message?.includes('IPFS')) {
         setStatus(`❌ IPFS upload failed`);
       } else if (error.message?.includes('Not active public contributor')) {
         setStatus('❌ Not registered. Please register first.');
-      } else if (error.code === 'ACTION_REJECTED') {
+      } else if (error.message?.includes('Contributor tree not initialized')) {
+        setStatus('❌ Contributor tree not initialized. Contact admin.');
+      } else if (error.message?.includes('Invalid contributor proof')) {
+        setStatus('❌ Invalid proof. You may not be in contributor tree.');
+      } else if (error.message?.includes('Commitment already used')) {
+        setStatus('❌ Commitment already used. Refresh and try again.');
+      } else if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
         setStatus('❌ Transaction cancelled');
+      } else if (error.code === 'UNKNOWN_ERROR' || error.code === -32603) {
+        setStatus('❌ RPC error. Check console for details. Try refreshing.');
       } else if (error.message?.includes('Insufficient submission fee')) {
         setStatus('❌ Insufficient submission fee. Network gas price may have spiked. Try again.');
       } else {
-        setStatus(`❌ ${error?.shortMessage || error?.message || 'Failed'}`);
+        setStatus(`❌ ${error?.reason || error?.shortMessage || error?.message || 'Failed - check console'}`);
       }
     } finally {
       setLoading(false);
