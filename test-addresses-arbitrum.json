@@ -31,5 +31,8 @@
       "reputationBonus": 15
     }
   },
-  "deployedAt": "2025-11-01T18:20:48.835Z"
+  "deployedAt": "2025-11-01T18:20:48.835Z",
+  "MerkleZKRegistry": "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61",
+  "merkleZKLinked": true,
+  "merkleZKRedeployed": "2025-12-02T17:09:17.977Z"
 }
