@@ -33,7 +33,7 @@ export const NETWORKS = {
       registry: "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44", // NEW: Latest deployment with ZKP fix
       governance: "0xa186FEE32e311f65C55612fc98195B27113d1e48", // NEW: Latest deployment
       storage: "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd", // NEW: Latest deployment
-      merkleZK: "0x22f2060fbe50403e588d70156776F72ab060Ab9c", // NEW: Redeployed, linked to correct Registry
+      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // NEWEST: Dec 3 2025 - Correctly linked to Registry
       oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE" // SAME: Existing Oracle
     },
     gasPrice: 0.1,
