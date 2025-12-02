@@ -334,8 +334,8 @@ export default function IOCSubmissionForm() {
         
         setStatus('📡 Submitting anonymously...');
         
-        // Use higher submission fee for L2 (0.001 ETH minimum)
-        const minFee = ethers.parseEther("0.001");
+        // Use much higher submission fee for L2 to ensure it passes (0.01 ETH)
+        const minFee = ethers.parseEther("0.01");  // Increased from 0.001
         const finalFee = submissionFeeWithMargin > minFee ? submissionFeeWithMargin : minFee;
         
         console.log('Final submission fee:', ethers.formatEther(finalFee), 'ETH');
@@ -348,7 +348,7 @@ export default function IOCSubmissionForm() {
           zkp.leaf, 
           { 
             value: finalFee,
-            gasLimit: 500000  // Increased from 450000
+            gasLimit: 1000000  // Increased from 500000 to 1M
           }
         );
         
