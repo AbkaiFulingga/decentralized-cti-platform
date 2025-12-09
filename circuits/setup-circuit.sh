@@ -13,14 +13,7 @@ echo ""
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'# Check what we actually got
-stat -c%s powersOfTau28_hez_final_14.ptau
-# Shows: 18957464 (18 MB) - TOO SMALL!
-
-# Remove the wrong file
-rm powersOfTau28_hez_final_14.ptau
-
-# Try
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if circom is installed
