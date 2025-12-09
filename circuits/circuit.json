@@ -1,0 +1,18 @@
+{
+  "protocol": "groth16",
+  "curve": "bn128",
+  "name": "contributor-proof",
+  "levels": 20,
+  "description": "Zero-knowledge proof of contributor registration without revealing identity",
+  "public_inputs": [
+    "commitment",
+    "merkleRoot"
+  ],
+  "private_inputs": [
+    "address",
+    "nonce",
+    "merkleProof",
+    "merklePathIndices"
+  ],
+  "constraints": "TBD (will be calculated during compilation)"
+}
