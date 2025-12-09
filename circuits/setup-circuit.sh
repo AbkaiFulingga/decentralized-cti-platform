@@ -78,22 +78,78 @@ echo "🌟 Step 2: Checking Powers of Tau ceremony file..."
 echo "─────────────────────────────────────────────────────────"
 
 PTAU_FILE="powersOfTau28_hez_final_15.ptau"
+PTAU_URL="https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
+PTAU_SIZE=288734806  # Expected file size in bytes (~275 MB)
 
+# Check if file exists and validate size
+if [ -f "$PTAU_FILE" ]; then
+    # Get file size (works on both macOS and Linux)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        FILE_SIZE=$(stat -f%z "$PTAU_FILE")
+    else
+        FILE_SIZE=$(stat -c%s "$PTAU_FILE")
+    fi
+    
+    if [ "$FILE_SIZE" -eq "$PTAU_SIZE" ]; then
+        echo -e "${GREEN}✅ Valid Powers of Tau file found (${FILE_SIZE} bytes)${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Existing file is incomplete or corrupted${NC}"
+        echo "   Current size: ${FILE_SIZE} bytes"
+        echo "   Expected size: ${PTAU_SIZE} bytes (~275 MB)"
+        echo "   Removing and re-downloading..."
+        rm "$PTAU_FILE"
+    fi
+fi
+
+# Download if not exists or was corrupted
 if [ ! -f "$PTAU_FILE" ]; then
     echo "⬇️  Downloading Powers of Tau (Phase 1 - Universal Setup)..."
-    echo "   This is a one-time download (~50 MB)..."
-    wget -q --show-progress https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau -O $PTAU_FILE
+    echo "   Size: ~275 MB (this may take 5-10 minutes)..."
+    echo "   URL: $PTAU_URL"
+    echo ""
     
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ Powers of Tau downloaded${NC}"
+    # Try curl first (with resume support)
+    if command -v curl &> /dev/null; then
+        echo "   Using curl (resumable)..."
+        curl -L -C - --progress-bar -o "$PTAU_FILE" "$PTAU_URL"
+        DOWNLOAD_RESULT=$?
+    # Fallback to wget
+    elif command -v wget &> /dev/null; then
+        echo "   Using wget..."
+        wget -c --show-progress "$PTAU_URL" -O "$PTAU_FILE"
+        DOWNLOAD_RESULT=$?
     else
-        echo -e "${RED}❌ Failed to download Powers of Tau${NC}"
-        echo "   Please download manually from:"
-        echo "   https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
+        echo -e "${RED}❌ Neither curl nor wget found${NC}"
+        echo "   Please install curl or wget, or download manually from:"
+        echo "   $PTAU_URL"
         exit 1
     fi
-else
-    echo -e "${GREEN}✅ Powers of Tau already exists${NC}"
+    
+    # Verify download
+    if [ $DOWNLOAD_RESULT -eq 0 ]; then
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            FILE_SIZE=$(stat -f%z "$PTAU_FILE")
+        else
+            FILE_SIZE=$(stat -c%s "$PTAU_FILE")
+        fi
+        
+        if [ "$FILE_SIZE" -eq "$PTAU_SIZE" ]; then
+            echo -e "${GREEN}✅ Download complete and verified (${FILE_SIZE} bytes)${NC}"
+        else
+            echo -e "${RED}❌ Download incomplete or corrupted${NC}"
+            echo "   Downloaded: ${FILE_SIZE} bytes"
+            echo "   Expected: ${PTAU_SIZE} bytes"
+            echo ""
+            echo "   Run this script again to resume download, or download manually:"
+            echo "   $PTAU_URL"
+            exit 1
+        fi
+    else
+        echo -e "${RED}❌ Failed to download Powers of Tau${NC}"
+        echo "   Run this script again to retry, or download manually:"
+        echo "   $PTAU_URL"
+        exit 1
+    fi
 fi
 echo ""
 
