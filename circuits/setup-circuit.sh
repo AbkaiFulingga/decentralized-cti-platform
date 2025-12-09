@@ -77,17 +77,17 @@ echo "────────────────────────�
 echo "🌟 Step 2: Checking Powers of Tau ceremony file..."
 echo "─────────────────────────────────────────────────────────"
 
-PTAU_FILE="powersOfTau28_hez_final_15.ptau"
+# Using ptau_14 (supports up to 16,384 constraints - we have 10,918)
+# This is smaller (137 MB vs 275 MB) and more widely available
+PTAU_FILE="powersOfTau28_hez_final_14.ptau"
 
 # Multiple mirror sources for the Powers of Tau file
-# ptau 15 supports circuits up to 2^15 = 32,768 constraints (we have 10,918)
 PTAU_URLS=(
-    "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau"
-    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
-    "https://github.com/iden3/snarkjs/raw/master/tools/powersOfTau28_hez_final_15.ptau"
+    "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_14.ptau"
+    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_14.ptau"
 )
 
-PTAU_SIZE=288734806  # Expected file size in bytes (~275 MB)
+PTAU_SIZE=144374342  # Expected file size in bytes (~137 MB)
 
 # Check if file exists and validate size
 if [ -f "$PTAU_FILE" ]; then
@@ -112,8 +112,9 @@ fi
 # Download if not exists or was corrupted
 if [ ! -f "$PTAU_FILE" ]; then
     echo "⬇️  Downloading Powers of Tau (Phase 1 - Universal Setup)..."
-    echo "   Size: ~275 MB (this may take 5-10 minutes)..."
-    echo "   Trying multiple mirrors..."
+    echo "   Using ptau_14: supports up to 16,384 constraints"
+    echo "   Our circuit: 10,918 constraints ✅"
+    echo "   Size: ~137 MB (this may take 2-5 minutes)..."
     echo ""
     
     DOWNLOAD_SUCCESS=0
@@ -168,8 +169,8 @@ if [ ! -f "$PTAU_FILE" ]; then
         echo ""
         echo "   Or use alternative ptau file (see below)"
         echo ""
-        echo "   Alternative: Use smaller ptau_14 (supports up to 16,384 constraints):"
-        echo "   wget https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_14.ptau"
+        echo "   Alternative: Use larger ptau_15 if needed (275 MB):"
+        echo "   wget https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau"
         echo "   Then update PTAU_FILE variable in this script"
         exit 1
     fi
