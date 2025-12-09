@@ -13,7 +13,14 @@ echo ""
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+YELLOW='\033[1;33m'# Check what we actually got
+stat -c%s powersOfTau28_hez_final_14.ptau
+# Shows: 18957464 (18 MB) - TOO SMALL!
+
+# Remove the wrong file
+rm powersOfTau28_hez_final_14.ptau
+
+# Try
 NC='\033[0m' # No Color
 
 # Check if circom is installed
@@ -77,17 +84,17 @@ echo "────────────────────────�
 echo "🌟 Step 2: Checking Powers of Tau ceremony file..."
 echo "─────────────────────────────────────────────────────────"
 
-# Using ptau_14 (supports up to 16,384 constraints - we have 10,918)
-# This is smaller (137 MB vs 275 MB) and more widely available
-PTAU_FILE="powersOfTau28_hez_final_14.ptau"
+# Using ptau_15 (supports up to 32,768 constraints - we have 10,918)
+# Verified working download from Google Cloud Storage
+PTAU_FILE="powersOfTau28_hez_final_15.ptau"
 
 # Multiple mirror sources for the Powers of Tau file
 PTAU_URLS=(
-    "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_14.ptau"
-    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_14.ptau"
+    "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau"
+    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
 )
 
-PTAU_SIZE=144374342  # Expected file size in bytes (~137 MB)
+PTAU_SIZE=37831832  # Expected file size in bytes (~36 MB) - actual working file
 
 # Check if file exists and validate size
 if [ -f "$PTAU_FILE" ]; then
@@ -112,9 +119,9 @@ fi
 # Download if not exists or was corrupted
 if [ ! -f "$PTAU_FILE" ]; then
     echo "⬇️  Downloading Powers of Tau (Phase 1 - Universal Setup)..."
-    echo "   Using ptau_14: supports up to 16,384 constraints"
+    echo "   Using ptau_15: supports up to 32,768 constraints"
     echo "   Our circuit: 10,918 constraints ✅"
-    echo "   Size: ~137 MB (this may take 2-5 minutes)..."
+    echo "   Size: ~36 MB (this may take 1-3 minutes)..."
     echo ""
     
     DOWNLOAD_SUCCESS=0
