@@ -9,7 +9,12 @@
     "oracle:dev": "nodemon scripts/oracle-service.js",
     "oracle:pm2": "pm2 start scripts/oracle-service.js --name cti-oracle",
     "oracle:stop": "pm2 stop cti-oracle",
-    "oracle:logs": "pm2 logs cti-oracle"
+    "oracle:logs": "pm2 logs cti-oracle",
+    "security:audit": "npx hardhat run scripts/attack-simulations/run-all-attacks.js --network arbitrumSepolia",
+    "security:linkability": "npx hardhat run scripts/attack-simulations/linkability-attack.js --network arbitrumSepolia",
+    "security:sybil": "npx hardhat run scripts/attack-simulations/sybil-attack.js --network arbitrumSepolia",
+    "security:replay": "npx hardhat run scripts/attack-simulations/replay-attack.js --network arbitrumSepolia",
+    "security:deanon": "npx hardhat run scripts/attack-simulations/deanonymization-attack.js --network arbitrumSepolia"
   },
   "keywords": [
     "blockchain",
