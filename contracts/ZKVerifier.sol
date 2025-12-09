@@ -119,7 +119,9 @@ contract ZKVerifier {
      * @notice Verify a zkSNARK proof for anonymous submission
      * @param commitment The commitment value (public output 1)
      * @param merkleRoot The Merkle root used in the proof (public output 2)
-     * @param proof The Groth16 proof components [a, b, c]
+     * @param a The Groth16 proof component A (G1 point)
+     * @param b The Groth16 proof component B (G2 point)
+     * @param c The Groth16 proof component C (G1 point)
      * @return bool True if proof is valid and commitment is unused
      */
     function verifyAnonymousSubmission(
