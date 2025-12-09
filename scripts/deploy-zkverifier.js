@@ -88,14 +88,13 @@ async function main() {
     
     const leaves = contributors.map(addr => {
       const addrBigInt = BigInt(addr);
-      return poseidon.F.toString(poseidon([addrBigInt]));
+      const hash = poseidon([addrBigInt]);
+      return poseidon.F.toString(hash);
     });
     
-    const tree = new MerkleTree(leaves, (data) => {
-      const input = Array.isArray(data) ? data : [data];
-      const hash = poseidon(input.map(x => BigInt(x)));
-      return poseidon.F.toString(hash);
-    }, { sortPairs: true });
+    // Simple hash function for Merkle tree (not using Poseidon for internal nodes)
+    const { keccak256 } = require('ethers');
+    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true, hashLeaves: false });
     
     initialMerkleRoot = '0x' + tree.getRoot().toString('hex');
     console.log(`   Merkle root: ${initialMerkleRoot}`);
