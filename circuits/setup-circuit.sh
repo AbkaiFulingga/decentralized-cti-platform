@@ -78,7 +78,15 @@ echo "🌟 Step 2: Checking Powers of Tau ceremony file..."
 echo "─────────────────────────────────────────────────────────"
 
 PTAU_FILE="powersOfTau28_hez_final_15.ptau"
-PTAU_URL="https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
+
+# Multiple mirror sources for the Powers of Tau file
+# ptau 15 supports circuits up to 2^15 = 32,768 constraints (we have 10,918)
+PTAU_URLS=(
+    "https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_15.ptau"
+    "https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_15.ptau"
+    "https://github.com/iden3/snarkjs/raw/master/tools/powersOfTau28_hez_final_15.ptau"
+)
+
 PTAU_SIZE=288734806  # Expected file size in bytes (~275 MB)
 
 # Check if file exists and validate size
@@ -105,49 +113,64 @@ fi
 if [ ! -f "$PTAU_FILE" ]; then
     echo "⬇️  Downloading Powers of Tau (Phase 1 - Universal Setup)..."
     echo "   Size: ~275 MB (this may take 5-10 minutes)..."
-    echo "   URL: $PTAU_URL"
+    echo "   Trying multiple mirrors..."
     echo ""
     
-    # Try curl first (with resume support)
-    if command -v curl &> /dev/null; then
-        echo "   Using curl (resumable)..."
-        curl -L -C - --progress-bar -o "$PTAU_FILE" "$PTAU_URL"
-        DOWNLOAD_RESULT=$?
-    # Fallback to wget
-    elif command -v wget &> /dev/null; then
-        echo "   Using wget..."
-        wget -c --show-progress "$PTAU_URL" -O "$PTAU_FILE"
-        DOWNLOAD_RESULT=$?
-    else
-        echo -e "${RED}❌ Neither curl nor wget found${NC}"
-        echo "   Please install curl or wget, or download manually from:"
-        echo "   $PTAU_URL"
-        exit 1
-    fi
+    DOWNLOAD_SUCCESS=0
     
-    # Verify download
-    if [ $DOWNLOAD_RESULT -eq 0 ]; then
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            FILE_SIZE=$(stat -f%z "$PTAU_FILE")
-        else
-            FILE_SIZE=$(stat -c%s "$PTAU_FILE")
-        fi
+    for PTAU_URL in "${PTAU_URLS[@]}"; do
+        echo "   Attempting: $PTAU_URL"
         
-        if [ "$FILE_SIZE" -eq "$PTAU_SIZE" ]; then
-            echo -e "${GREEN}✅ Download complete and verified (${FILE_SIZE} bytes)${NC}"
+        # Try curl first (with resume support)
+        if command -v curl &> /dev/null; then
+            curl -L -C - --progress-bar -o "$PTAU_FILE" "$PTAU_URL" 2>&1
+            DOWNLOAD_RESULT=$?
+        # Fallback to wget
+        elif command -v wget &> /dev/null; then
+            wget -c --show-progress "$PTAU_URL" -O "$PTAU_FILE" 2>&1
+            DOWNLOAD_RESULT=$?
         else
-            echo -e "${RED}❌ Download incomplete or corrupted${NC}"
-            echo "   Downloaded: ${FILE_SIZE} bytes"
-            echo "   Expected: ${PTAU_SIZE} bytes"
-            echo ""
-            echo "   Run this script again to resume download, or download manually:"
-            echo "   $PTAU_URL"
+            echo -e "${RED}❌ Neither curl nor wget found${NC}"
+            echo "   Please install curl or wget"
             exit 1
         fi
-    else
-        echo -e "${RED}❌ Failed to download Powers of Tau${NC}"
-        echo "   Run this script again to retry, or download manually:"
-        echo "   $PTAU_URL"
+        
+        # Check if download succeeded
+        if [ $DOWNLOAD_RESULT -eq 0 ] && [ -f "$PTAU_FILE" ]; then
+            # Verify file size
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                FILE_SIZE=$(stat -f%z "$PTAU_FILE")
+            else
+                FILE_SIZE=$(stat -c%s "$PTAU_FILE")
+            fi
+            
+            if [ "$FILE_SIZE" -eq "$PTAU_SIZE" ]; then
+                echo -e "${GREEN}✅ Download complete and verified (${FILE_SIZE} bytes)${NC}"
+                DOWNLOAD_SUCCESS=1
+                break
+            else
+                echo -e "${YELLOW}⚠️  File size mismatch (${FILE_SIZE} vs ${PTAU_SIZE}), trying next mirror...${NC}"
+                rm "$PTAU_FILE"
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Download failed, trying next mirror...${NC}"
+            [ -f "$PTAU_FILE" ] && rm "$PTAU_FILE"
+        fi
+    done
+    
+    if [ $DOWNLOAD_SUCCESS -eq 0 ]; then
+        echo -e "${RED}❌ All download mirrors failed${NC}"
+        echo ""
+        echo "   Please download manually from one of these sources:"
+        for url in "${PTAU_URLS[@]}"; do
+            echo "   - $url"
+        done
+        echo ""
+        echo "   Or use alternative ptau file (see below)"
+        echo ""
+        echo "   Alternative: Use smaller ptau_14 (supports up to 16,384 constraints):"
+        echo "   wget https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_14.ptau"
+        echo "   Then update PTAU_FILE variable in this script"
         exit 1
     fi
 fi
