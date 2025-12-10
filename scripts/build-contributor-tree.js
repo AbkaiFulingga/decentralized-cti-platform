@@ -10,13 +10,12 @@ const { keccak256 } = require('ethers');
 async function main() {
     console.log("🌲 Building Contributor Merkle Tree\n");
 
-    const [admin1, admin2, admin3] = await ethers.getSigners();
+    const [deployer] = await ethers.getSigners();
     
-    // List of registered contributors (addresses)
+    // Use actual deployer address (you can add more contributors here)
     const contributors = [
-        admin1.address,
-        admin2.address,
-        admin3.address
+        deployer.address,  // Your actual deployer address
+        // Add more contributor addresses as needed
     ];
 
     console.log("📋 Contributors:");
