@@ -51,6 +51,7 @@ contract PrivacyPreservingRegistry is Ownable {
     
     address public governance;
     address public merkleZKRegistry;  // ✅ FIX: Add reference to MerkleZKRegistry
+    address public zkVerifier;  // zkSNARK verifier for anonymous submissions
     
     // Tiered staking amounts
     uint256 public constant MICRO_STAKE = 0.01 ether;
@@ -65,6 +66,7 @@ contract PrivacyPreservingRegistry is Ownable {
     uint256 public totalAnonymousContributors;
     
     event BatchAdded(uint256 indexed index, string cid, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash);
+    event BatchAddedWithZKProof(uint256 indexed index, string cid, bytes32 merkleRoot, uint256 commitment, uint256 contributorMerkleRoot);
     event ContributorRegistered(address indexed contributor, uint256 stake, uint256 tier);
     event AnonymousContributorRegistered(bytes32 indexed commitment, uint256 stake, uint256 tier);
     event ReputationUpdated(bytes32 indexed contributorHash, uint256 newScore, bool isPublic);
@@ -519,6 +521,72 @@ contract PrivacyPreservingRegistry is Ownable {
     // ✅ FIX: Set MerkleZKRegistry address
     function setMerkleZKRegistry(address _merkleZK) external onlyOwner {
         merkleZKRegistry = _merkleZK;
+    }
+    
+    // ✅ Set ZKVerifier address for zkSNARK proofs
+    function setZKVerifier(address _zkVerifier) external onlyOwner {
+        zkVerifier = _zkVerifier;
+    }
+    
+    /**
+     * @notice Submit IOC batch with zkSNARK proof (anonymous submission)
+     * @param cid IPFS CID containing the IOC data
+     * @param merkleRoot Merkle root of the IOC batch
+     * @param proof zkSNARK proof components [pA, pB, pC, pubSignals]
+     * @dev Proof format from SnarkJS: proof.pi_a, proof.pi_b, proof.pi_c, publicSignals
+     */
+    function addBatchWithZKProof(
+        string memory cid,
+        bytes32 merkleRoot,
+        uint256[2] memory pA,
+        uint256[2][2] memory pB,
+        uint256[2] memory pC,
+        uint256[2] memory pubSignals  // [commitment, merkleRoot]
+    ) external payable {
+        require(zkVerifier != address(0), "ZKVerifier not set");
+        
+        // Calculate 1% submission fee
+        uint256 estimatedGasCost = 200000 * tx.gasprice;
+        uint256 submissionFee = (estimatedGasCost * SUBMISSION_FEE_PERCENT) / 100;
+        require(msg.value >= submissionFee, "Insufficient submission fee");
+        
+        adminRewardPool += submissionFee;
+        emit AdminRewardPoolUpdated(adminRewardPool);
+        
+        // Verify the zkSNARK proof via ZKVerifier
+        (bool success, bytes memory returnData) = zkVerifier.call(
+            abi.encodeWithSignature(
+                "verifyAndRegisterProof(uint256[2],uint256[2][2],uint256[2],uint256[2])",
+                pA, pB, pC, pubSignals
+            )
+        );
+        
+        require(success, "ZK proof verification failed");
+        require(abi.decode(returnData, (bool)), "Invalid ZK proof");
+        
+        // Extract commitment from public signals
+        uint256 commitment = pubSignals[0];
+        bytes32 contributorHash = bytes32(commitment);
+        
+        // Add batch as anonymous submission
+        batches.push(Batch({
+            cid: cid,
+            merkleRoot: merkleRoot,
+            timestamp: block.timestamp,
+            accepted: false,
+            contributorHash: contributorHash,
+            isPublic: false,
+            confirmationCount: 0,
+            falsePositiveReports: 0
+        }));
+        
+        emit BatchAddedWithZKProof(batches.length - 1, cid, merkleRoot, commitment, pubSignals[1]);
+        emit BatchAdded(batches.length - 1, cid, merkleRoot, false, contributorHash);
+    }
+    
+    // ✅ Get ZKVerifier address
+    function getZKVerifier() external view returns (address) {
+        return zkVerifier;
     }
     
     function getPlatformStats() external view returns (
