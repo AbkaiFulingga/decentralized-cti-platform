@@ -27,10 +27,15 @@ async function main() {
   const registryAddress = await registry.getAddress();
   console.log(`✅ PrivacyPreservingRegistry deployed: ${registryAddress}`);
 
-  // Deploy ThresholdGovernance
+  // Deploy ThresholdGovernance with 3 admins, threshold 2
   console.log("\n📦 Deploying ThresholdGovernance...");
   const Governance = await hre.ethers.getContractFactory("ThresholdGovernance");
-  const governance = await Governance.deploy(registryAddress);
+  
+  // Use deployer as all 3 admins for now (can be changed later)
+  const admins = [deployer.address, deployer.address, deployer.address];
+  const threshold = 2; // 2-of-3 multi-sig
+  
+  const governance = await Governance.deploy(admins, threshold, registryAddress);
   await governance.waitForDeployment();
   const governanceAddress = await governance.getAddress();
   console.log(`✅ ThresholdGovernance deployed: ${governanceAddress}`);
