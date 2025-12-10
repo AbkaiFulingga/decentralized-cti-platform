@@ -40,10 +40,10 @@ async function main() {
   const governanceAddress = await governance.getAddress();
   console.log(`✅ ThresholdGovernance deployed: ${governanceAddress}`);
 
-  // Deploy StorageContribution
+  // Deploy StorageContribution with registry and governance addresses
   console.log("\n📦 Deploying StorageContribution...");
   const Storage = await hre.ethers.getContractFactory("StorageContribution");
-  const storage = await Storage.deploy();
+  const storage = await Storage.deploy(registryAddress, governanceAddress);
   await storage.waitForDeployment();
   const storageAddress = await storage.getAddress();
   console.log(`✅ StorageContribution deployed: ${storageAddress}`);
@@ -65,11 +65,6 @@ async function main() {
   tx = await registry.setStorageContract(storageAddress);
   await tx.wait();
   console.log("✅ Storage linked");
-
-  console.log("Setting registry in storage...");
-  tx = await storage.setRegistry(registryAddress);
-  await tx.wait();
-  console.log("✅ Registry linked to storage");
 
   // Save addresses
   const addresses = {
