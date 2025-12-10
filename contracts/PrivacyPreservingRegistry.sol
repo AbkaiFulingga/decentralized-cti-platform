@@ -532,7 +532,10 @@ contract PrivacyPreservingRegistry is Ownable {
      * @notice Submit IOC batch with zkSNARK proof (anonymous submission)
      * @param cid IPFS CID containing the IOC data
      * @param merkleRoot Merkle root of the IOC batch
-     * @param proof zkSNARK proof components [pA, pB, pC, pubSignals]
+     * @param pA First component of Groth16 proof
+     * @param pB Second component of Groth16 proof
+     * @param pC Third component of Groth16 proof
+     * @param pubSignals Public signals [commitment, merkleRoot]
      * @dev Proof format from SnarkJS: proof.pi_a, proof.pi_b, proof.pi_c, publicSignals
      */
     function addBatchWithZKProof(
