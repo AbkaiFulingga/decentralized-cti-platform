@@ -61,10 +61,8 @@ async function main() {
   await tx.wait();
   console.log("✅ ZKVerifier linked");
 
-  console.log("Setting storage in registry...");
-  tx = await registry.setStorageContract(storageAddress);
-  await tx.wait();
-  console.log("✅ Storage linked");
+  // Note: StorageContribution is deployed but operates independently
+  // It's linked to registry via constructor and doesn't need setStorageContract call
 
   // Save addresses
   const addresses = {
