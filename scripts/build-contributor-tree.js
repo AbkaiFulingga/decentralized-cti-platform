@@ -44,7 +44,7 @@ async function main() {
             
             // Convert proof to format needed by circuit
             const pathIndices = proof.map(p => p.position === 'right' ? 1 : 0);
-            const siblings = proof.map(p => BigInt(p.data.toString('hex'), 16).toString());
+            const siblings = proof.map(p => BigInt('0x' + p.data.toString('hex')).toString());
 
             return {
                 index,
