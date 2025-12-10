@@ -1,0 +1,9 @@
+{
+  "network": "arbitrumSepolia",
+  "groth16Verifier": "0xDb7c15F9992F9f25bFCC67759C2ff9468ed93bDb",
+  "zkVerifier": "0x5a958cE9b6899203f2d460cAcA2624F6f9dcbD34",
+  "merkleRoot": "0x64e18ec16d3a0bbe85d819d8e30a5c45e6e52e50ce3dd6c62e1dde4fc19632d3",
+  "deployer": "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82",
+  "deployedAt": "2024-12-09T00:00:00.000Z",
+  "note": "Day 1 zkSNARK deployment - Groth16Verifier + ZKVerifier wrapper"
+}
