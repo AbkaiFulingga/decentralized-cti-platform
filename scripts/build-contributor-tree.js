@@ -10,11 +10,15 @@ const { keccak256 } = require('ethers');
 async function main() {
     console.log("🌲 Building Contributor Merkle Tree\n");
 
-    const [deployer] = await ethers.getSigners();
+    // Get the actual signer from private key (not Hardhat default accounts)
+    const provider = ethers.provider;
+    const wallet = new ethers.Wallet(process.env.PRIVATE_KEY_ADMIN1 || process.env.PRIVATE_KEY, provider);
+    
+    console.log(`📍 Using address: ${wallet.address}\n`);
     
     // Use actual deployer address (you can add more contributors here)
     const contributors = [
-        deployer.address,  // Your actual deployer address
+        wallet.address,  // Your actual deployer address from .env
         // Add more contributor addresses as needed
     ];
 
