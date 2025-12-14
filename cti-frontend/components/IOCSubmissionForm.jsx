@@ -7,6 +7,7 @@ import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
 import { NETWORKS, STAKING_TIERS } from '../utils/constants';
 import { zkProver } from '../utils/merkle-zkp';
+import { zksnarkProver } from '../utils/zksnark-prover';
 
 export default function IOCSubmissionForm() {
   const [iocInput, setIocInput] = useState('');
@@ -28,6 +29,9 @@ export default function IOCSubmissionForm() {
   const [anonymitySetSize, setAnonymitySetSize] = useState(0);
   const [treeAge, setTreeAge] = useState(null);
   const [isInTree, setIsInTree] = useState(false);
+  const [zksnarkReady, setZksnarkReady] = useState(false);
+  const [proofGenerating, setProofGenerating] = useState(false);
+  const [proofProgress, setProofProgress] = useState('');
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -82,6 +86,7 @@ export default function IOCSubmissionForm() {
       setWalletBalance('0');
       setIsRegistered(false);
       setZkpReady(false);
+      setZksnarkReady(false);
       setIsInTree(false);
     } else {
       setWalletAddress(accounts[0]);
@@ -157,12 +162,20 @@ export default function IOCSubmissionForm() {
   const loadZKPTree = async () => {
     setZkpLoading(true);
     try {
+      // Load Merkle tree for both old Merkle-based and new zkSNARK-based proofs
       const loaded = await zkProver.loadContributorTree();
       if (loaded) {
         setZkpReady(true);
         setAnonymitySetSize(zkProver.getAnonymitySetSize());
         setTreeAge(zkProver.getTreeFreshness());
         if (walletAddress) setIsInTree(zkProver.isInTree(walletAddress));
+      }
+      
+      // Also load for zkSNARK prover
+      const zksnarkLoaded = await zksnarkProver.loadContributorTree();
+      if (zksnarkLoaded) {
+        setZksnarkReady(true);
+        console.log('✅ zkSNARK prover ready');
       }
     } finally {
       setZkpLoading(false);
@@ -303,88 +316,92 @@ export default function IOCSubmissionForm() {
       }
 
       // Submit batch
-      if (privacyMode === 'anonymous' && currentNetwork.chainId === 421614 && zkpReady && isInTree) {
-        // ANONYMOUS SUBMISSION (L2 only)
-        setStatus('🔐 Generating ZK proof...');
-        const zkp = zkProver.generateProof(address);
+      if (privacyMode === 'anonymous' && currentNetwork.chainId === 421614 && zksnarkReady && isInTree) {
+        // ═══════════════════════════════════════════════════════════
+        // ANONYMOUS SUBMISSION WITH GROTH16 zkSNARK PROOF (L2 only)
+        // ═══════════════════════════════════════════════════════════
         
-        if (!zkp?.proof || !zkp?.leaf || !zkp?.commitment) {
-          throw new Error('ZKP generation failed');
-        }
+        setProofGenerating(true);
         
-        const merkleZK = new ethers.Contract(
-          currentNetwork.contracts.merkleZK,
-          ["function submitBatchAnonymous(string memory cid, bytes32 batchMerkleRoot, bytes32 commitment, bytes32[] memory contributorProof, bytes32 contributorLeaf) external payable"],
-          signer
-        );
-        
-        // ✅ Calculate submission fee using maxFeePerGas
-        const feeData = await provider.getFeeData();
-        const txGasPrice = feeData.maxFeePerGas || feeData.gasPrice || ethers.parseUnits("0.1", "gwei");
-        
-        const estimatedGas = 200000n;
-        const gasCost = estimatedGas * txGasPrice;
-        const submissionFee = (gasCost * 1n) / 100n;
-        const submissionFeeWithMargin = (submissionFee * 2n) / 1n; // 2x for anonymous
-        
-        console.log('=== ANONYMOUS SUBMISSION FEE ===');
-        console.log('maxFeePerGas:', ethers.formatUnits(txGasPrice, 'gwei'), 'Gwei');
-        console.log('Base fee (1%):', ethers.formatEther(submissionFee), 'ETH');
-        console.log('With 2x margin:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
-        
-        setStatus('📡 Submitting anonymously...');
-        
-        // Use much higher submission fee for L2 to ensure it passes (0.01 ETH)
-        const minFee = ethers.parseEther("0.01");  // Increased from 0.001
-        const finalFee = submissionFeeWithMargin > minFee ? submissionFeeWithMargin : minFee;
-        
-        console.log('Final submission fee:', ethers.formatEther(finalFee), 'ETH');
-        
-        // Test with staticCall first to get better error messages
-        console.log('=== TESTING WITH STATICCALL ===');
         try {
-          await merkleZK.submitBatchAnonymous.staticCall(
-            cid, merkleRootHash, zkp.commitment, zkp.proof, zkp.leaf,
-            { value: finalFee }
+          // Step 1: Generate Groth16 zkSNARK proof in browser
+          setStatus('🔐 Generating zkSNARK proof...');
+          setProofProgress('Loading circuit files (~22 MB)...');
+          
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('🔐 Starting Groth16 zkSNARK Proof Generation');
+          console.log('═══════════════════════════════════════════════════════');
+          
+          const startTime = Date.now();
+          
+          setProofProgress('Computing witness (may take 10-30 seconds)...');
+          const proof = await zksnarkProver.generateGroth16Proof(address, merkleRootHash);
+          
+          const proofTime = Date.now() - startTime;
+          console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);
+          
+          setProofProgress('Proof generated! Preparing transaction...');
+          
+          // Step 2: Get contract instance
+          const registryWithZK = new ethers.Contract(
+            currentNetwork.contracts.registry,
+            [
+              "function addBatchWithZKProof(string memory cid, bytes32 merkleRoot, uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC, uint256[2] memory pubSignals) external"
+            ],
+            signer
           );
-          console.log('✅ StaticCall passed - transaction should work');
-        } catch (staticError) {
-          console.error('❌ StaticCall failed:', staticError);
-          throw new Error(`StaticCall failed: ${staticError.reason || staticError.message}`);
-        }
-        
-        // Estimate gas
-        console.log('=== ESTIMATING GAS ===');
-        let gasEstimate;
-        try {
-          gasEstimate = await merkleZK.submitBatchAnonymous.estimateGas(
-            cid, merkleRootHash, zkp.commitment, zkp.proof, zkp.leaf,
-            { value: finalFee }
+          
+          // Step 3: Submit with zkSNARK proof
+          setStatus('📡 Submitting with zkSNARK proof...');
+          setProofProgress('Sending transaction to blockchain...');
+          
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('📡 Submitting Anonymous Batch with Groth16 Proof');
+          console.log('═══════════════════════════════════════════════════════');
+          console.log('CID:', cid);
+          console.log('Merkle Root:', merkleRootHash);
+          console.log('Proof pA:', proof.pA);
+          console.log('Proof pB:', proof.pB);
+          console.log('Proof pC:', proof.pC);
+          console.log('Public Signals:', proof.pubSignals);
+          
+          const tx = await registryWithZK.addBatchWithZKProof(
+            cid,
+            merkleRootHash,
+            proof.pA,
+            proof.pB,
+            proof.pC,
+            proof.pubSignals,
+            { gasLimit: 500000 } // Higher gas for zkSNARK verification
           );
-          console.log('Gas estimate:', gasEstimate.toString());
-        } catch (gasError) {
-          console.error('❌ Gas estimation failed:', gasError);
-          throw new Error(`Gas estimation failed: ${gasError.reason || gasError.message}`);
+          
+          setTxHash(tx.hash);
+          setStatus(`⏳ Confirming: ${tx.hash.substring(0, 10)}...`);
+          setProofProgress('Waiting for blockchain confirmation...');
+          
+          console.log('Transaction hash:', tx.hash);
+          
+          const receipt = await tx.wait();
+          
+          console.log('✅ Transaction confirmed!');
+          console.log('Gas used:', receipt.gasUsed.toString());
+          console.log('Block:', receipt.blockNumber);
+          
+          setStatus(`✅ Anonymous batch submitted with zkSNARK proof! 🎭
+Hidden among ${zksnarkProver.getAnonymitySetInfo()?.size || 'N'} contributors
+Proof generation: ${(proofTime / 1000).toFixed(1)}s
+Gas used: ${receipt.gasUsed.toString()}`);
+          
+          setProofProgress('');
+          
+        } catch (proofError) {
+          console.error('❌ zkSNARK submission failed:', proofError);
+          setStatus(`❌ zkSNARK proof generation failed: ${proofError.message}`);
+          setProofProgress('');
+          throw proofError;
+        } finally {
+          setProofGenerating(false);
         }
-        
-        // Send transaction with estimated gas + buffer
-        console.log('=== SENDING TRANSACTION ===');
-        const tx = await merkleZK.submitBatchAnonymous(
-          cid, 
-          merkleRootHash, 
-          zkp.commitment, 
-          zkp.proof, 
-          zkp.leaf, 
-          { 
-            value: finalFee,
-            gasLimit: gasEstimate * 120n / 100n  // Use estimate + 20% buffer
-          }
-        );
-        
-        setTxHash(tx.hash);
-        setStatus(`⏳ ${tx.hash.substring(0, 10)}...`);
-        await tx.wait();
-        setStatus(`✅ Anonymous batch submitted! Hidden among ${zkp.anonymitySetSize} contributors 🎭`);
         
       } else {
         // PUBLIC SUBMISSION
@@ -645,19 +662,22 @@ export default function IOCSubmissionForm() {
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
                       <div>
-                        <p className="text-blue-300 font-semibold">Loading ZKP System...</p>
+                        <p className="text-blue-300 font-semibold">Loading zkSNARK System...</p>
                         <p className="text-gray-400 text-sm">Fetching contributor Merkle tree...</p>
                       </div>
                     </div>
                   </div>
-                ) : zkpReady && isInTree ? (
+                ) : zksnarkReady && isInTree ? (
                   <div className="p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
                     <div className="flex items-center gap-3">
                       <span className="text-2xl">🔐</span>
                       <div className="flex-1">
-                        <p className="text-green-300 font-semibold">Anonymous Mode Ready</p>
+                        <p className="text-green-300 font-semibold">zkSNARK Anonymous Mode Ready</p>
                         <p className="text-gray-400 text-sm">
-                          Your submission will be hidden among <span className="text-green-400 font-bold">{anonymitySetSize}</span> registered contributors
+                          Groth16 proof will be generated in your browser (~10-30s)
+                        </p>
+                        <p className="text-gray-400 text-sm">
+                          Hidden among <span className="text-green-400 font-bold">{anonymitySetSize}</span> registered contributors
                         </p>
                         {treeAge && (
                           <p className="text-gray-500 text-xs mt-1">
@@ -808,10 +828,10 @@ export default function IOCSubmissionForm() {
                     }`}
                   >
                     <div className="text-center">
-                      <span className="text-3xl block mb-2">🔒</span>
-                      <p className="text-white font-bold mb-1">Anonymous (ZKP)</p>
+                      <span className="text-3xl block mb-2">�</span>
+                      <p className="text-white font-bold mb-1">Anonymous (zkSNARK)</p>
                       <p className="text-gray-400 text-xs">
-                        {!isRegistered ? 'Register first to unlock' : 'Identity hidden via zero-knowledge proof'}
+                        {!isRegistered ? 'Register first to unlock' : 'Groth16 proof generated in browser'}
                       </p>
                     </div>
                   </button>
@@ -871,19 +891,33 @@ export default function IOCSubmissionForm() {
 
               <button
                 type="submit"
-                disabled={loading || !iocInput.trim() || !canAffordSubmission()}
+                disabled={loading || proofGenerating || !iocInput.trim() || !canAffordSubmission()}
                 className={`w-full py-4 rounded-xl font-bold text-lg transition-all ${
-                  loading || !iocInput.trim() || !canAffordSubmission()
+                  loading || proofGenerating || !iocInput.trim() || !canAffordSubmission()
                     ? 'bg-gray-700 cursor-not-allowed text-gray-500'
                     : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white transform hover:scale-105'
                 }`}
               >
-                {loading ? '⏳ Processing...' : 
+                {proofGenerating ? '🔐 Generating zkSNARK Proof...' :
+                 loading ? '⏳ Processing...' : 
                  !canAffordSubmission() ? '❌ Insufficient Balance' :
-                 isRegistered ? (privacyMode === 'anonymous' && canSubmitAnonymously() ? '🔒 Submit Anonymously' : '🚀 Submit Batch') : 
+                 isRegistered ? (privacyMode === 'anonymous' && canSubmitAnonymously() ? '🔒 Submit Anonymously (zkSNARK)' : '🚀 Submit Batch') : 
                  '🚀 Register & Submit (2 TXs)'}
               </button>
             </form>
+
+            {proofGenerating && proofProgress && (
+              <div className="mt-6 p-4 rounded-xl border bg-purple-500/10 border-purple-500/30">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 border-2 border-purple-500/30 border-t-purple-500 rounded-full animate-spin"></div>
+                  <div>
+                    <p className="text-purple-300 font-semibold">Generating zkSNARK Proof</p>
+                    <p className="text-gray-400 text-sm">{proofProgress}</p>
+                    <p className="text-gray-500 text-xs mt-1">This may take 10-30 seconds...</p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {status && (
               <div className={`mt-6 p-4 rounded-xl border ${
