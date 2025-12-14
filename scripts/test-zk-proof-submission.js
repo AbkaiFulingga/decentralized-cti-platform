@@ -124,22 +124,23 @@ async function main() {
   // Step 5: Submit anonymous batch
   console.log("\n🚀 Step 5: Submitting anonymous batch...");
   
-  // Convert proof to contract format
-  const proofArgs = [
-    proof.pi_a.slice(0, 2),
-    [proof.pi_b[0].slice(0, 2), proof.pi_b[1].slice(0, 2)],
-    proof.pi_c.slice(0, 2)
-  ];
+  // Convert proof to contract format (pA, pB, pC as separate parameters)
+  const pA = proof.pi_a.slice(0, 2);
+  const pB = [proof.pi_b[0].slice(0, 2), proof.pi_b[1].slice(0, 2)];
+  const pC = proof.pi_c.slice(0, 2);
+  const pubSignals = publicSignals.slice(0, 2); // [commitment, merkleRoot]
 
-  const commitment = publicSignals[0];
-  console.log(`🔒 Commitment: ${commitment}`);
+  console.log(`🔒 Commitment: ${pubSignals[0]}`);
+  console.log(`🌲 Merkle Root (from proof): ${pubSignals[1]}`);
 
   try {
     const tx = await registry.addBatchWithZKProof(
       ipfsHash,
       iocRoot,
-      proofArgs,
-      commitment
+      pA,
+      pB,
+      pC,
+      pubSignals
     );
     
     console.log(`⏳ Transaction sent: ${tx.hash}`);
