@@ -365,6 +365,16 @@ export default function IOCSubmissionForm() {
           console.log('Proof pC:', proof.pC);
           console.log('Public Signals:', proof.pubSignals);
           
+          // Calculate submission fee (1% of estimated gas cost)
+          const feeData = await provider.getFeeData();
+          const txGasPrice = feeData.maxFeePerGas || feeData.gasPrice || ethers.parseUnits("0.1", "gwei");
+          const estimatedGas = 500000n;
+          const gasCost = estimatedGas * txGasPrice;
+          const submissionFee = (gasCost * 1n) / 100n;
+          const submissionFeeWithMargin = (submissionFee * 2n); // 2x margin for safety
+          
+          console.log('Submission fee:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
+          
           const tx = await registryWithZK.addBatchWithZKProof(
             cid,
             merkleRootHash,
@@ -372,7 +382,10 @@ export default function IOCSubmissionForm() {
             proof.pB,
             proof.pC,
             proof.pubSignals,
-            { gasLimit: 500000 } // Higher gas for zkSNARK verification
+            { 
+              value: submissionFeeWithMargin,
+              gasLimit: 500000 
+            }
           );
           
           setTxHash(tx.hash);
@@ -540,7 +553,7 @@ Gas used: ${receipt.gasUsed.toString()}`);
   };
 
   const canSubmitAnonymously = () => {
-    return currentNetwork?.chainId === 421614 && isRegistered && zkpReady && isInTree;
+    return currentNetwork?.chainId === 421614 && isRegistered && zksnarkReady && isInTree;
   };
 
   return (
@@ -692,7 +705,7 @@ Gas used: ${receipt.gasUsed.toString()}`);
                       </div>
                     </div>
                   </div>
-                ) : zkpReady && !isInTree ? (
+                ) : zksnarkReady && !isInTree ? (
                   <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl">
                     <div className="flex items-center gap-3">
                       <span className="text-2xl">⏳</span>
