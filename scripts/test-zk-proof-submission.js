@@ -33,15 +33,19 @@ async function main() {
     const contributorInfo = await registry.contributors(signer.address);
     if (!contributorInfo.isActive) {
       console.log("⚠️  Not registered. Registering with Premium tier (0.1 ETH)...");
-      const tx = await registry.registerContributor({ value: hre.ethers.parseEther("0.1") });
+      const tx = await registry.registerContributor({ 
+        value: "100000000000000000" // 0.1 ETH in wei as string
+      });
       await tx.wait();
       console.log("✅ Registered successfully!");
     } else {
       console.log(`✅ Already registered (Tier: ${contributorInfo.tier})`);
     }
   } catch (error) {
-    console.log("⚠️  Registering with Premium tier (0.1 ETH)...");
-    const tx = await registry.registerContributor({ value: hre.ethers.parseEther("0.1") });
+    console.log("⚠️  Error checking status, attempting registration...");
+    const tx = await registry.registerContributor({ 
+      value: "100000000000000000" // 0.1 ETH in wei as string
+    });
     await tx.wait();
     console.log("✅ Registered successfully!");
   }
