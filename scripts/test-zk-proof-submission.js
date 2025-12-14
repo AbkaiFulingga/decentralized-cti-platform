@@ -12,7 +12,12 @@ const { keccak256 } = require("ethers");
 async function main() {
   console.log("\n🧪 Testing zkSNARK Proof Submission...\n");
 
-  const [signer] = await hre.ethers.getSigners();
+  const signers = await hre.ethers.getSigners();
+  if (!signers || signers.length === 0) {
+    throw new Error("❌ No signers available. Make sure PRIVATE_KEY is set in .env");
+  }
+  
+  const signer = signers[0];
   console.log(`🔑 Testing with: ${signer.address}`);
 
   // Load contract addresses
