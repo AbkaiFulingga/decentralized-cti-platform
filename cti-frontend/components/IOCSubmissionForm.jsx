@@ -995,7 +995,7 @@ Gas used: ${receipt.gasUsed.toString()}`);
                     <li>• Data is uploaded to IPFS (decentralized storage)</li>
                     <li>• Batch requires 3/3 admin approvals before becoming queryable</li>
                     {privacyMode === 'anonymous' && currentNetwork?.chainId === 421614 && (
-                      <li>• <span className="text-purple-400 font-semibold">Anonymous mode uses Merkle tree zero-knowledge proofs to hide your identity</span></li>
+                      <li>• <span className="text-purple-400 font-semibold">Anonymous mode uses Groth16 zkSNARK proofs generated in your browser to hide your identity</span></li>
                     )}
                   </ul>
                 </div>
