@@ -33,9 +33,8 @@ async function main() {
     const contributorInfo = await registry.contributors(signer.address);
     if (!contributorInfo.isActive) {
       console.log("⚠️  Not registered. Registering with Premium tier (0.1 ETH)...");
-      const tx = await registry.registerContributor({ 
-        value: "100000000000000000" // 0.1 ETH in wei as string
-      });
+      const stakeAmount = hre.ethers.parseEther("0.1");
+      const tx = await registry.registerContributor(stakeAmount, { value: stakeAmount });
       await tx.wait();
       console.log("✅ Registered successfully!");
     } else {
@@ -43,9 +42,8 @@ async function main() {
     }
   } catch (error) {
     console.log("⚠️  Error checking status, attempting registration...");
-    const tx = await registry.registerContributor({ 
-      value: "100000000000000000" // 0.1 ETH in wei as string
-    });
+    const stakeAmount = hre.ethers.parseEther("0.1");
+    const tx = await registry.registerContributor(stakeAmount, { value: stakeAmount });
     await tx.wait();
     console.log("✅ Registered successfully!");
   }
