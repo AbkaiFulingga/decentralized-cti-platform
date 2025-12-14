@@ -13,8 +13,18 @@
  */
 
 import { ethers } from 'ethers';
+import { MerkleTree } from 'merkletreejs';
+import keccak256 from 'keccak256';
 
-const snarkjs = typeof window !== 'undefined' ? require('snarkjs') : null;
+// Dynamic import for snarkjs (only works in browser)
+let snarkjs = null;
+if (typeof window !== 'undefined') {
+  import('snarkjs').then(module => {
+    snarkjs = module;
+  }).catch(err => {
+    console.error('Failed to load snarkjs:', err);
+  });
+}
 
 export class ZKSnarkProver {
   constructor() {
@@ -99,9 +109,6 @@ export class ZKSnarkProver {
     }
 
     // Reconstruct Merkle tree to get proof
-    const { MerkleTree } = require('merkletreejs');
-    const keccak256 = require('keccak256');
-    
     const leaves = this.contributorTree.leaves.map(l => Buffer.from(l.slice(2), 'hex'));
     const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
     
@@ -132,8 +139,11 @@ export class ZKSnarkProver {
    * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment}
    */
   async generateGroth16Proof(address, merkleRoot) {
+    // Load snarkjs dynamically if not already loaded
     if (!snarkjs) {
-      throw new Error('snarkjs not available - must run in browser');
+      console.log('📦 Loading snarkjs library...');
+      snarkjs = await import('snarkjs');
+      console.log('✅ snarkjs loaded');
     }
 
     if (!this.contributorTree) {
