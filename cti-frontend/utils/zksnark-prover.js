@@ -53,6 +53,7 @@ export class ZKSnarkProver {
       
       console.log('✅ Contributor tree loaded:');
       console.log(`   - ${result.contributorCount} contributors in tree`);
+      console.log(`   - Contributors:`, result.contributors);
       console.log(`   - Merkle root: ${result.root}`);
       console.log(`   - Last update: ${new Date(result.timestamp).toLocaleString()}`);
       
@@ -100,11 +101,21 @@ export class ZKSnarkProver {
     }
 
     const addressLower = address.toLowerCase();
-    const leaf = ethers.keccak256(ethers.toUtf8Bytes(addressLower));
+    // ✅ FIX: Hash raw address bytes (not UTF-8 string) to match tree building
+    const leaf = ethers.keccak256(Buffer.from(addressLower.slice(2), 'hex'));
+    
+    console.log('🔍 Debug getMerkleProof:');
+    console.log('   Address:', address);
+    console.log('   Computed leaf:', leaf);
+    console.log('   Tree leaves:', this.contributorTree.leaves);
+    console.log('   Tree contributors:', this.contributorTree.contributors);
     
     // Find leaf index
     const leafIndex = this.contributorTree.leaves.indexOf(leaf);
     if (leafIndex === -1) {
+      console.error('❌ Address not found!');
+      console.error('   Your address:', addressLower);
+      console.error('   Addresses in tree:', this.contributorTree.contributors);
       throw new Error('Address not found in contributor tree');
     }
 
