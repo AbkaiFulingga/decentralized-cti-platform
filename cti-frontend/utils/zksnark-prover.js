@@ -122,17 +122,23 @@ export class ZKSnarkProver {
     // Reconstruct Merkle tree to get proof
     // ✅ FIX: MerkleTree will hash the leaves, so we pass already-hashed leaves
     // and tell it not to hash them again
+    console.log('🔨 Reconstructing Merkle tree...');
+    console.log('   Raw leaves from API:', this.contributorTree.leaves);
+    
     const leaves = this.contributorTree.leaves.map(l => Buffer.from(l.slice(2), 'hex'));
+    console.log('   Buffer leaves count:', leaves.length);
+    console.log('   Buffer leaves:', leaves.map(l => '0x' + l.toString('hex')));
+    
     const tree = new MerkleTree(leaves, keccak256, { 
       sortPairs: true,
       hashLeaves: false  // ✅ CRITICAL: Don't double-hash!
     });
     
-    console.log('🌳 Reconstructed tree root:', tree.getHexRoot());
+    const reconstructedRoot = tree.getHexRoot();
+    console.log('🌳 Reconstructed tree root:', reconstructedRoot);
     console.log('📄 Expected root from API:', this.contributorTree.root);
     
     // Verify roots match
-    const reconstructedRoot = tree.getHexRoot();
     if (reconstructedRoot.toLowerCase() !== this.contributorTree.root.toLowerCase()) {
       console.error('❌ Tree reconstruction mismatch!');
       console.error('   Reconstructed:', reconstructedRoot);
