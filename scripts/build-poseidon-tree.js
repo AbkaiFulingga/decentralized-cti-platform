@@ -9,10 +9,9 @@ const fs = require('fs');
 async function main() {
     console.log("🌲 Building Poseidon-based Contributor Merkle Tree\n");
 
-    // Get deployer address from environment
-    const { ethers } = require('ethers');
-    const provider = new ethers.JsonRpcProvider(process.env.SEPOLIA_RPC_URL);
-    const wallet = new ethers.Wallet(process.env.PRIVATE_KEY_ADMIN1, provider);
+    // Get signer from Hardhat
+    const [signer] = await ethers.getSigners();
+    const wallet = signer;
     
     // List of contributor addresses (add more as needed)
     const contributors = [
