@@ -34,6 +34,7 @@ async function main() {
     // Build Poseidon-based Merkle tree
     console.log("\n⚙️  Building Poseidon Merkle tree...");
     const poseidon = await buildPoseidon();
+    const F = poseidon.F;  // Field for conversions
     
     // Convert addresses to BigInt leaves
     const leaves = allContributors.map(addr => ethers.toBigInt(addr));
@@ -63,8 +64,9 @@ async function main() {
         for (let i = 0; i < currentLevel.length; i += 2) {
             const left = currentLevel[i];
             const right = currentLevel[i + 1];
-            const parent = poseidon([left, right]);
-            nextLevel.push(parent);
+            const hash = poseidon([left, right]);
+            const hashBigInt = F.toObject(hash);  // Convert Uint8Array to BigInt
+            nextLevel.push(hashBigInt);
         }
         
         tree.push(nextLevel);
@@ -73,11 +75,7 @@ async function main() {
     }
     
     // Root is the single element at the top level
-    const lastLevel = tree[tree.length - 1];
-    console.log(`\n🔍 Debug - Last level length: ${lastLevel.length}`);
-    console.log(`   Last level type: ${typeof lastLevel[0]}`);
-    
-    const rootBigInt = lastLevel[0];
+    const rootBigInt = currentLevel[0];  // currentLevel is now array of BigInts
     const rootHex = rootBigInt.toString(16).padStart(64, '0');
     const root = "0x" + rootHex;
     console.log("\n✅ Merkle Root:", root);
