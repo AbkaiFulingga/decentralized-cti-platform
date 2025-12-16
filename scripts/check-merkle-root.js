@@ -17,7 +17,7 @@ async function main() {
     const merkleZK = MerkleZKRegistry.attach(merkleZKAddress);
 
     // Get current root
-    const currentRoot = await merkleZK.merkleRoot();
+    const currentRoot = await merkleZK.contributorMerkleRoot(); // ✅ FIX: Correct function name
     console.log(`🌳 Current Merkle Root in contract:`);
     console.log(`   ${currentRoot}\n`);
 

@@ -40,7 +40,7 @@ async function main() {
     console.log(`✅ Root updated! Block: ${receipt.blockNumber}\n`);
 
     // Verify
-    const newRoot = await merkleZK.merkleRoot();
+    const newRoot = await merkleZK.contributorMerkleRoot(); // ✅ FIX: Correct function name
     console.log(`🔍 Verification:`);
     console.log(`   Contract root: ${newRoot}`);
     console.log(`   Expected root: ${localTree.root}`);
