@@ -154,36 +154,48 @@ export class ZKSnarkProver {
    * Generate Groth16 zkSNARK proof for anonymous submission
    * 
    * @param {string} address - Contributor's Ethereum address
+   * @param {Function} progressCallback - Optional callback for progress updates: (stage, progress, details)
    * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment}
    */
-  async generateGroth16Proof(address) {
+  async generateGroth16Proof(address, progressCallback = null) {
+    // Helper to report progress
+    const reportProgress = (stage, progress, details = {}) => {
+      console.log(`🔄 ${stage} (${progress}%)`, details);
+      if (progressCallback) {
+        progressCallback({ stage, progress, details, timestamp: Date.now() });
+      }
+    };
+
     // Load snarkjs dynamically if not already loaded
     if (!snarkjs) {
-      console.log('📦 Loading snarkjs library...');
+      reportProgress('Loading snarkjs library', 5);
       snarkjs = await import('snarkjs');
-      console.log('✅ snarkjs loaded');
+      reportProgress('snarkjs loaded', 10);
     }
 
     if (!this.contributorTree) {
       throw new Error('Contributor tree not loaded - call loadContributorTree() first');
     }
 
-    console.log('🔐 Starting Groth16 zkSNARK proof generation...');
-    console.log(`   Address: ${address}`);
-    console.log(`   Contributor tree root: ${this.contributorTree.root}`);
+    reportProgress('Starting proof generation', 15, {
+      address: address,
+      treeRoot: this.contributorTree.root,
+      anonymitySetSize: this.contributorTree.contributorCount
+    });
 
     try {
       // Step 1: Get Merkle proof
-      console.log('📝 Step 1: Getting Merkle proof...');
+      reportProgress('Building Merkle proof', 20);
       const merkleProofData = this.getMerkleProof(address);
       
-      console.log(`   ✅ Leaf: ${merkleProofData.leaf}`);
-      console.log(`   ✅ Proof elements: ${merkleProofData.proof.length}`);
-      console.log(`   ✅ Root: ${merkleProofData.root}`);
+      reportProgress('Merkle proof verified', 30, {
+        leafHash: merkleProofData.leaf,
+        pathLength: merkleProofData.proof.length,
+        treeDepth: merkleProofData.proof.length
+      });
 
       // ✅ FIX: Use contributor tree root from loaded tree data
       const contributorTreeRoot = this.contributorTree.root;
-      console.log(`   ✅ Contributor tree root: ${contributorTreeRoot}`);
       
       // Verify root matches
       if (merkleProofData.root.toLowerCase() !== contributorTreeRoot.toLowerCase()) {
@@ -191,13 +203,12 @@ export class ZKSnarkProver {
       }
 
       // Step 2: Generate random nonce for commitment
-      console.log('🎲 Step 2: Generating commitment nonce...');
+      reportProgress('Generating commitment nonce', 40);
       const nonce = ethers.toBigInt(ethers.hexlify(ethers.randomBytes(32)));
-      console.log(`   ✅ Nonce: ${nonce.toString().substring(0, 20)}...`);
 
       // Step 3: Calculate commitment using Poseidon hash
       // Commitment = Poseidon(address, nonce)
-      console.log('🔐 Step 3: Computing Poseidon commitment...');
+      reportProgress('Computing Poseidon commitment', 45);
       const addressBigInt = ethers.toBigInt(address);
       
       // Use Poseidon hash from snarkjs (same as circuit)
@@ -205,10 +216,12 @@ export class ZKSnarkProver {
       const commitmentHash = poseidon.F.toString(poseidon([addressBigInt, nonce]));
       const commitment = '0x' + BigInt(commitmentHash).toString(16).padStart(64, '0');
       
-      console.log(`   ✅ Commitment: ${commitment}`);
+      reportProgress('Commitment generated', 50, {
+        commitment: commitment.substring(0, 20) + '...'
+      });
 
       // Step 4: Prepare circuit inputs
-      console.log('📋 Step 3: Preparing circuit inputs...');
+      reportProgress('Preparing circuit inputs', 55);
       
       // Pad Merkle proof to 20 levels (circuit expects fixed-size arrays)
       const MERKLE_TREE_LEVELS = 20;
@@ -233,14 +246,15 @@ export class ZKSnarkProver {
         merklePathIndices: paddedIndices
       };
 
-      console.log('   ✅ Circuit inputs prepared');
-      console.log(`   - Address: ${circuitInputs.address.toString().substring(0, 20)}...`);
-      console.log(`   - Nonce: ${circuitInputs.nonce.toString().substring(0, 20)}...`);
-      console.log(`   - Merkle proof depth: ${merkleProofData.proof.length}`);
+      reportProgress('Circuit inputs prepared', 60, {
+        constraintCount: '~2,000 R1CS constraints',
+        treeDepth: merkleProofData.proof.length
+      });
 
       // Step 5: Generate witness
-      console.log('⚙️  Step 4: Computing witness (calculating circuit)...');
-      console.log('   ⏱️  This may take 5-10 seconds...');
+      reportProgress('Computing witness (calculating circuit)', 65, {
+        estimatedTime: '5-10 seconds'
+      });
       
       const startWitness = Date.now();
       
@@ -251,10 +265,13 @@ export class ZKSnarkProver {
       );
       
       const witnessTime = Date.now() - startWitness;
-      console.log(`   ✅ Witness computed in ${witnessTime}ms`);
+      reportProgress('Witness computed', 80, {
+        computationTime: `${witnessTime}ms`,
+        constraintsProcessed: '~2,000'
+      });
 
       // Step 6: Format proof for Solidity
-      console.log('📦 Step 5: Formatting proof for Groth16Verifier.sol...');
+      reportProgress('Formatting proof for Solidity', 90);
       
       const pA = [fullProof.pi_a[0], fullProof.pi_a[1]];
       const pB = [
@@ -263,11 +280,10 @@ export class ZKSnarkProver {
       ];
       const pC = [fullProof.pi_c[0], fullProof.pi_c[1]];
 
-      console.log('   ✅ Proof formatted');
-      console.log(`   - pA: [${pA[0].substring(0, 20)}..., ${pA[1].substring(0, 20)}...]`);
-      console.log(`   - pB: 2x2 matrix`);
-      console.log(`   - pC: [${pC[0].substring(0, 20)}..., ${pC[1].substring(0, 20)}...]`);
-      console.log(`   - Public signals: ${publicSignals.length}`);
+      reportProgress('Proof formatted', 95, {
+        proofSize: '768 bytes',
+        proofType: 'Groth16'
+      });
 
       // Step 7: Return formatted proof
       const proofData = {
@@ -280,10 +296,12 @@ export class ZKSnarkProver {
         generationTime: witnessTime
       };
 
-      console.log('✅ Groth16 zkSNARK proof generation complete!');
-      console.log(`   Total time: ${witnessTime}ms`);
-      console.log(`   Proof size: ~768 bytes (Groth16)`);
-      console.log(`   Anonymity set: ${this.contributorTree.contributorCount} contributors`);
+      reportProgress('Proof generation complete!', 100, {
+        totalTime: `${witnessTime}ms`,
+        proofSize: '~768 bytes',
+        anonymitySet: this.contributorTree.contributorCount,
+        privacyGuarantee: `1/${this.contributorTree.contributorCount} identifiability`
+      });
 
       return proofData;
 

@@ -8,6 +8,7 @@ import keccak256 from 'keccak256';
 import { NETWORKS, STAKING_TIERS } from '../utils/constants';
 import { zkProver } from '../utils/merkle-zkp';
 import { zksnarkProver } from '../utils/zksnark-prover';
+import ProofProgressVisualizer from './ProofProgressVisualizer';
 
 export default function IOCSubmissionForm() {
   const [iocInput, setIocInput] = useState('');
@@ -31,7 +32,9 @@ export default function IOCSubmissionForm() {
   const [isInTree, setIsInTree] = useState(false);
   const [zksnarkReady, setZksnarkReady] = useState(false);
   const [proofGenerating, setProofGenerating] = useState(false);
-  const [proofProgress, setProofProgress] = useState('');
+  const [proofProgress, setProofProgress] = useState(0);
+  const [proofStage, setProofStage] = useState('');
+
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -326,7 +329,8 @@ export default function IOCSubmissionForm() {
         try {
           // Step 1: Generate Groth16 zkSNARK proof in browser
           setStatus('🔐 Generating zkSNARK proof...');
-          setProofProgress('Loading circuit files (~22 MB)...');
+          setProofGenerating(true);
+          setProofProgress(0);
           
           console.log('═══════════════════════════════════════════════════════');
           console.log('🔐 Starting Groth16 zkSNARK Proof Generation');
@@ -334,14 +338,21 @@ export default function IOCSubmissionForm() {
           
           const startTime = Date.now();
           
-          setProofProgress('Computing witness (may take 10-30 seconds)...');
-          // ✅ FIX: Don't pass IOC merkleRoot - the prover uses contributor tree root internally
-          const proof = await zksnarkProver.generateGroth16Proof(address);
+          // Progress callback for proof generation
+          const handleProofProgress = (progressData) => {
+            setProofProgress(progressData.progress);
+            setProofStage(progressData.stage);
+            console.log(`📊 ${progressData.stage}: ${progressData.progress}%`, progressData.details);
+          };
+          
+          // ✅ Generate proof with progress updates
+          const proof = await zksnarkProver.generateGroth16Proof(address, handleProofProgress);
           
           const proofTime = Date.now() - startTime;
           console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);
           
-          setProofProgress('Proof generated! Preparing transaction...');
+          setProofGenerating(false);
+          setStatus('📡 Proof generated! Preparing transaction...');
           
           // Step 2: Get contract instance
           const registryWithZK = new ethers.Contract(
@@ -558,13 +569,20 @@ Gas used: ${receipt.gasUsed.toString()}`);
   };
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
-        
-        <div className="mb-6">
-          <h2 className="text-3xl font-bold text-white mb-2">🚀 Submit IOC Batch</h2>
-          <p className="text-gray-400">Share threat intelligence with the community</p>
-        </div>
+    <>
+      {/* Proof Progress Overlay */}
+      <ProofProgressVisualizer 
+        progress={proofProgress} 
+        isGenerating={proofGenerating}
+      />
+
+      <div className="max-w-4xl mx-auto">
+        <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
+          
+          <div className="mb-6">
+            <h2 className="text-3xl font-bold text-white mb-2">🚀 Submit IOC Batch</h2>
+            <p className="text-gray-400">Share threat intelligence with the community</p>
+          </div>
 
         {!walletConnected ? (
           <div className="text-center py-12">
@@ -1006,5 +1024,6 @@ Gas used: ${receipt.gasUsed.toString()}`);
         )}
       </div>
     </div>
+    </>
   );
 }
