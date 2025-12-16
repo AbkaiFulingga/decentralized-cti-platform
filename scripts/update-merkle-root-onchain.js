@@ -8,7 +8,7 @@ async function main() {
 
     // Load deployment addresses
     const deployments = require('../deployments/merkle-zk-arbitrum.json');
-    const merkleZKAddress = deployments.MerkleZKRegistry;
+    const merkleZKAddress = deployments.merkleZKRegistry; // ✅ FIX: Use lowercase key
     
     console.log(`📍 MerkleZKRegistry: ${merkleZKAddress}\n`);
 
