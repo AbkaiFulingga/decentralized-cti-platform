@@ -239,7 +239,7 @@ export class ZKSnarkProver {
       const circuitInputs = {
         // Public inputs
         commitment: ethers.toBigInt(commitment),
-        merkleRoot: ethers.toBigInt(merkleRoot),
+        merkleRoot: ethers.toBigInt(contributorTreeRoot), // ✅ FIX: Use contributorTreeRoot
         
         // Private inputs
         address: addressBigInt,
