@@ -335,7 +335,8 @@ export default function IOCSubmissionForm() {
           const startTime = Date.now();
           
           setProofProgress('Computing witness (may take 10-30 seconds)...');
-          const proof = await zksnarkProver.generateGroth16Proof(address, merkleRootHash);
+          // ✅ FIX: Don't pass IOC merkleRoot - the prover uses contributor tree root internally
+          const proof = await zksnarkProver.generateGroth16Proof(address);
           
           const proofTime = Date.now() - startTime;
           console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);

@@ -169,10 +169,9 @@ export class ZKSnarkProver {
    * Generate Groth16 zkSNARK proof for anonymous submission
    * 
    * @param {string} address - Contributor's Ethereum address
-   * @param {string} merkleRoot - Root of contributor Merkle tree
    * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment}
    */
-  async generateGroth16Proof(address, merkleRoot) {
+  async generateGroth16Proof(address) {
     // Load snarkjs dynamically if not already loaded
     if (!snarkjs) {
       console.log('📦 Loading snarkjs library...');
@@ -197,9 +196,13 @@ export class ZKSnarkProver {
       console.log(`   ✅ Proof elements: ${merkleProofData.proof.length}`);
       console.log(`   ✅ Root: ${merkleProofData.root}`);
 
+      // ✅ FIX: Use contributor tree root from loaded tree data
+      const contributorTreeRoot = this.contributorTree.root;
+      console.log(`   ✅ Contributor tree root: ${contributorTreeRoot}`);
+      
       // Verify root matches
-      if (merkleProofData.root.toLowerCase() !== merkleRoot.toLowerCase()) {
-        throw new Error(`Merkle root mismatch: ${merkleProofData.root} vs ${merkleRoot}`);
+      if (merkleProofData.root.toLowerCase() !== contributorTreeRoot.toLowerCase()) {
+        throw new Error(`Merkle root mismatch: ${merkleProofData.root} vs ${contributorTreeRoot}`);
       }
 
       // Step 2: Generate random nonce for commitment
