@@ -32,7 +32,7 @@ async function main() {
 
     // Update root
     console.log("📤 Sending transaction to update Merkle root...");
-    const tx = await merkleZK.updateMerkleRoot(localTree.root);
+    const tx = await merkleZK.updateContributorRoot(localTree.root, localTree.contributorCount); // ✅ FIX: Correct function name
     console.log(`   TX hash: ${tx.hash}`);
     
     console.log("⏳ Waiting for confirmation...");
