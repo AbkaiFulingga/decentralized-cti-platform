@@ -72,9 +72,14 @@ async function main() {
         console.log(`   Level ${level + 1}: ${currentLevel.length} nodes`);
     }
     
-    // Root is the single element at the top
-    const rootBigInt = tree[treeDepth][0];
-    const root = "0x" + rootBigInt.toString(16).padStart(64, '0');
+    // Root is the single element at the top level
+    const lastLevel = tree[tree.length - 1];
+    console.log(`\n🔍 Debug - Last level length: ${lastLevel.length}`);
+    console.log(`   Last level type: ${typeof lastLevel[0]}`);
+    
+    const rootBigInt = lastLevel[0];
+    const rootHex = rootBigInt.toString(16).padStart(64, '0');
+    const root = "0x" + rootHex;
     console.log("\n✅ Merkle Root:", root);
     
     // Generate proofs for all contributors
