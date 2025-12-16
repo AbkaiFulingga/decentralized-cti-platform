@@ -26,6 +26,7 @@ export async function GET() {
           success: true,
           root: treeData.root,
           leaves: treeData.leaves,
+          contributors: treeData.contributors, // ✅ FIX: Include contributors array
           contributorCount: treeData.contributorCount,
           anonymitySetSize: treeData.contributorCount,
           timestamp: treeData.timestamp,
@@ -54,6 +55,7 @@ export async function GET() {
       success: true,
       root: treeData.root,
       leaves: treeData.leaves,
+      contributors: treeData.contributors, // ✅ FIX: Include contributors array
       contributorCount: treeData.contributorCount,
       anonymitySetSize: treeData.contributorCount,
       timestamp: treeData.timestamp,
