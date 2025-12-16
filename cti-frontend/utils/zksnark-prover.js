@@ -185,7 +185,7 @@ export class ZKSnarkProver {
 
     console.log('🔐 Starting Groth16 zkSNARK proof generation...');
     console.log(`   Address: ${address}`);
-    console.log(`   Merkle Root: ${merkleRoot}`);
+    console.log(`   Contributor tree root: ${this.contributorTree.root}`);
 
     try {
       // Step 1: Get Merkle proof
