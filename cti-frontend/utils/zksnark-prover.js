@@ -32,6 +32,22 @@ export class ZKSnarkProver {
     this.zkeyPath = '/circuits/contributor-proof_final.zkey';
     this.circuitLoaded = false;
     this.contributorTree = null;
+    this.poseidonCache = null;
+  }
+
+  /**
+   * Build Poseidon hash function (same as used in circuit)
+   * Caches the result for performance
+   */
+  async buildPoseidon() {
+    if (this.poseidonCache) {
+      return this.poseidonCache;
+    }
+    
+    // Use poseidon from circomlibjs (same library used by circuits)
+    const poseidonModule = await import('circomlibjs');
+    this.poseidonCache = await poseidonModule.buildPoseidon();
+    return this.poseidonCache;
   }
 
   /**
@@ -210,15 +226,15 @@ export class ZKSnarkProver {
       const nonce = ethers.toBigInt(ethers.hexlify(ethers.randomBytes(32)));
       console.log(`   ✅ Nonce: ${nonce.toString().substring(0, 20)}...`);
 
-      // Step 3: Calculate commitment (will be verified in circuit)
+      // Step 3: Calculate commitment using Poseidon hash
       // Commitment = Poseidon(address, nonce)
-      // Note: We'll use Poseidon inside the circuit; here we just prepare inputs
+      console.log('🔐 Step 3: Computing Poseidon commitment...');
       const addressBigInt = ethers.toBigInt(address);
       
-      // For now, use a placeholder commitment (circuit will compute real one with Poseidon)
-      const commitment = ethers.keccak256(
-        ethers.solidityPacked(['uint256', 'uint256'], [addressBigInt, nonce])
-      );
+      // Use Poseidon hash from snarkjs (same as circuit)
+      const poseidon = await this.buildPoseidon();
+      const commitmentHash = poseidon.F.toString(poseidon([addressBigInt, nonce]));
+      const commitment = '0x' + BigInt(commitmentHash).toString(16).padStart(64, '0');
       
       console.log(`   ✅ Commitment: ${commitment}`);
 
