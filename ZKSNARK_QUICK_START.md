@@ -1,42 +1,24 @@
-# zkSNARK Testing - Quick Start Guide
+# zkSNARK Testing - Quick Start Guide ✅
 
-## 🚀 Deploy to Server (Run These Commands)
+**Status**: 🟢 **FULLY DEPLOYED - READY FOR TESTING**  
+**Frontend**: http://192.168.1.11:3000  
+**Network**: Arbitrum Sepolia (Chain ID: 421614)  
+**Date**: December 16, 2025
 
-### **Step 1: Push Code from Mac**
-```bash
-# On your Mac
-cd /Users/user/decentralized-cti-platform-2
-git add .
-git commit -m "Add browser-based zkSNARK proof generation"
-git push origin main
-```
+---
 
-### **Step 2: Update Server & Deploy Circuits**
-```bash
-# SSH to server
-ssh sc@192.168.1.11
+## ✅ Deployment Complete!
 
-# Pull latest code
-cd ~/blockchain-dev
-git pull origin main
+All components are deployed and operational:
+- ✅ Circuit files deployed to frontend
+- ✅ Poseidon-based contributor tree generated
+- ✅ Contract updated with Poseidon root (tx: 0x973621af...)
+- ✅ Tree file accessible at `/contributor-merkle-tree.json`
+- ✅ Frontend running on PM2 (dev-server)
+- ✅ zkSNARK prover integrated with Poseidon hash
 
-# Deploy circuit files to frontend
-bash scripts/deploy-circuits-server.sh
-```
-
-### **Step 3: Install Dependencies & Start Website**
-```bash
-# Still on server
-cd ~/blockchain-dev/cti-frontend
-
-# Install snarkjs and other dependencies
-npm install
-
-# Start Next.js development server
-npm run dev
-```
-
-**Website is now live at**: `http://192.168.1.11:3000`
+**Current Root**: `0x2f9e67f4bc7e901c3a6818fb2a515f04053b37fbf7e2913c6e5169635b2081d6`  
+**Contributors**: 1 (0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82)
 
 ---
 
