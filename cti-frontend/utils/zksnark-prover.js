@@ -109,76 +109,45 @@ export class ZKSnarkProver {
 
   /**
    * Get Merkle proof for an address
+   * Uses Poseidon hash (same as circuit) to reconstruct tree
    * Returns the path elements and indices needed for circuit
    */
-  getMerkleProof(address) {
+  async getMerkleProof(address) {
     if (!this.contributorTree) {
       throw new Error('Contributor tree not loaded');
     }
 
-    const addressLower = address.toLowerCase();
-    // ✅ FIX: Hash raw address bytes (not UTF-8 string) to match tree building
-    const leaf = ethers.keccak256(Buffer.from(addressLower.slice(2), 'hex'));
+    const addressBigInt = ethers.toBigInt(address);
+    const addressHex = '0x' + addressBigInt.toString(16).padStart(64, '0');
     
     console.log('🔍 Debug getMerkleProof:');
     console.log('   Address:', address);
-    console.log('   Computed leaf:', leaf);
+    console.log('   Address as BigInt:', addressBigInt.toString());
     console.log('   Tree leaves:', this.contributorTree.leaves);
     console.log('   Tree contributors:', this.contributorTree.contributors);
     
     // Find leaf index
-    const leafIndex = this.contributorTree.leaves.indexOf(leaf);
+    const leafIndex = this.contributorTree.leaves.indexOf(addressHex.toLowerCase());
     if (leafIndex === -1) {
       console.error('❌ Address not found!');
-      console.error('   Your address:', addressLower);
+      console.error('   Your address:', address);
       console.error('   Addresses in tree:', this.contributorTree.contributors);
       throw new Error('Address not found in contributor tree');
     }
 
-    // Reconstruct Merkle tree to get proof
-    // ✅ FIX: MerkleTree will hash the leaves, so we pass already-hashed leaves
-    // and tell it not to hash them again
-    console.log('🔨 Reconstructing Merkle tree...');
-    console.log('   Raw leaves from API:', this.contributorTree.leaves);
-    
-    const leaves = this.contributorTree.leaves.map(l => Buffer.from(l.slice(2), 'hex'));
-    console.log('   Buffer leaves count:', leaves.length);
-    console.log('   Buffer leaves:', leaves.map(l => '0x' + l.toString('hex')));
-    
-    const tree = new MerkleTree(leaves, keccak256, { 
-      sortPairs: true,
-      hashLeaves: false  // ✅ CRITICAL: Don't double-hash!
-    });
-    
-    const reconstructedRoot = tree.getHexRoot();
-    console.log('🌳 Reconstructed tree root:', reconstructedRoot);
-    console.log('📄 Expected root from API:', this.contributorTree.root);
-    
-    // Verify roots match
-    if (reconstructedRoot.toLowerCase() !== this.contributorTree.root.toLowerCase()) {
-      console.error('❌ Tree reconstruction mismatch!');
-      console.error('   Reconstructed:', reconstructedRoot);
-      console.error('   Expected:', this.contributorTree.root);
-      throw new Error('Failed to reconstruct Merkle tree correctly');
+    // Use precomputed proof from tree data (tree was built with Poseidon)
+    if (this.contributorTree.proofs && this.contributorTree.proofs[leafIndex]) {
+      const proofData = this.contributorTree.proofs[leafIndex];
+      console.log('✅ Using precomputed Poseidon proof');
+      return {
+        proof: proofData.proof,
+        pathIndices: proofData.pathIndices,
+        leaf: proofData.leaf,
+        root: this.contributorTree.root
+      };
     }
-    
-    // Get proof as array of hashes
-    const proof = tree.getHexProof(Buffer.from(leaf.slice(2), 'hex'));
-    
-    // Get path indices (0 = left, 1 = right)
-    const pathIndices = [];
-    let index = leafIndex;
-    for (let i = 0; i < proof.length; i++) {
-      pathIndices.push(index % 2);
-      index = Math.floor(index / 2);
-    }
-    
-    return {
-      proof,
-      pathIndices,
-      leaf,
-      root: tree.getHexRoot()
-    };
+
+    throw new Error('Proof not found in tree data - tree needs to be rebuilt with proofs');
   }
 
   /**

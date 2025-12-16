@@ -28,20 +28,28 @@ async function main() {
     });
     console.log();
 
-    // Build Merkle tree (same method as circuit expects)
-    const leaves = contributors.map(addr => 
-        keccak256(Buffer.from(addr.toLowerCase().slice(2), 'hex'))
-    );
+    // Build Merkle tree using RAW ADDRESSES as leaves (circuit will hash them)
+    // The circuit expects: merkleChecker.leaf <== address (as BigInt)
+    // MerkleTreeInclusionProof will internally hash with Poseidon
+    const { ethers } = require('ethers');
+    const leaves = contributors.map(addr => ethers.toBigInt(addr));
     
-    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+    // For JS MerkleTree library, we need to convert to Buffer
+    // But we'll store the BigInt values in JSON
+    const leafBuffers = leaves.map(l => {
+        const hex = l.toString(16).padStart(64, '0');
+        return Buffer.from(hex, 'hex');
+    });
+    
+    const tree = new MerkleTree(leafBuffers, keccak256, { sortPairs: true });
     const root = tree.getHexRoot();
 
     console.log(`✅ New Merkle Root: ${root}\n`);
 
-    // Save to file
+    // Save to file - store leaves as hex strings of BigInt values
     const treeData = {
         root: root,
-        leaves: leaves.map(l => l),
+        leaves: leaves.map(l => '0x' + l.toString(16).padStart(64, '0')),
         contributors: contributors,
         contributorCount: contributors.length,
         treeDepth: Math.ceil(Math.log2(contributors.length)),
