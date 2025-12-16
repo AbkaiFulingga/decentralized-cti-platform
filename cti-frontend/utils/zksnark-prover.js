@@ -120,8 +120,25 @@ export class ZKSnarkProver {
     }
 
     // Reconstruct Merkle tree to get proof
+    // ✅ FIX: MerkleTree will hash the leaves, so we pass already-hashed leaves
+    // and tell it not to hash them again
     const leaves = this.contributorTree.leaves.map(l => Buffer.from(l.slice(2), 'hex'));
-    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+    const tree = new MerkleTree(leaves, keccak256, { 
+      sortPairs: true,
+      hashLeaves: false  // ✅ CRITICAL: Don't double-hash!
+    });
+    
+    console.log('🌳 Reconstructed tree root:', tree.getHexRoot());
+    console.log('📄 Expected root from API:', this.contributorTree.root);
+    
+    // Verify roots match
+    const reconstructedRoot = tree.getHexRoot();
+    if (reconstructedRoot.toLowerCase() !== this.contributorTree.root.toLowerCase()) {
+      console.error('❌ Tree reconstruction mismatch!');
+      console.error('   Reconstructed:', reconstructedRoot);
+      console.error('   Expected:', this.contributorTree.root);
+      throw new Error('Failed to reconstruct Merkle tree correctly');
+    }
     
     // Get proof as array of hashes
     const proof = tree.getHexProof(Buffer.from(leaf.slice(2), 'hex'));
