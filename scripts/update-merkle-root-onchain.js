@@ -18,9 +18,9 @@ async function main() {
     
     console.log(`📄 New Merkle root from local tree:`);
     console.log(`   Root: ${localTree.root}`);
-    console.log(`   Contributors: ${localTree.contributorCount}`);
-    console.log(`   Addresses:`, localTree.contributors);
-    console.log(`   Last update: ${localTree.lastUpdate}\n`);
+    console.log(`   Contributors: ${localTree.contributors.length}`);
+    console.log(`   Addresses: ${localTree.contributors.slice(0, 5).map(c => c.address).join(', ')}...`);
+    console.log(`   Generated: ${localTree.generatedAt}\n`);
 
     // Get contract
     const MerkleZKRegistry = await ethers.getContractFactory("MerkleZKRegistry");
@@ -32,7 +32,8 @@ async function main() {
 
     // Update root
     console.log("📤 Sending transaction to update Merkle root...");
-    const tx = await merkleZK.updateContributorRoot(localTree.root, localTree.contributorCount); // ✅ FIX: Correct function name
+    const contributorCount = localTree.contributors.length;
+    const tx = await merkleZK.updateContributorRoot(localTree.root, contributorCount);
     console.log(`   TX hash: ${tx.hash}`);
     
     console.log("⏳ Waiting for confirmation...");
