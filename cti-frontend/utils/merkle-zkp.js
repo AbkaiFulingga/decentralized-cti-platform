@@ -1,8 +1,14 @@
 // utils/merkle-zkp.js
-import { MerkleTree } from 'merkletreejs';
-import keccak256 from 'keccak256';
 import { ethers } from 'ethers';
+import { buildPoseidon } from 'circomlibjs';
 
+// Helper to build a Poseidon Merkle tree (simple JS version)
+function poseidonHash(left, right, poseidon) {
+  return poseidon([
+    BigInt('0x' + left.toString('hex')),
+    BigInt('0x' + right.toString('hex'))
+  ]);
+}
 export class MerkleZKProver {
   constructor() {
     this.contributorTree = null;
@@ -34,15 +40,27 @@ export class MerkleZKProver {
       // Verify root matches
       const computedRoot = '0x' + this.contributorTree.getRoot().toString('hex');
       if (computedRoot !== this.treeData.root) {
-        throw new Error('Tree root mismatch - data may be corrupted');
-      }
-      
-      this.loaded = true;
-      
-      console.log('✅ Contributor tree loaded:');
-      console.log(`   - ${this.treeData.contributorCount} contributors`);
-      console.log(`   - Tree depth: ${this.contributorTree.getDepth()}`);
-      console.log(`   - Last update: ${new Date(this.treeData.timestamp).toLocaleString()}`);
+          // Reconstruct Merkle tree from leaves using Poseidon
+          const poseidon = await buildPoseidon();
+          const leaves = this.treeData.leaves.map(leaf => Buffer.from(leaf.slice(2), 'hex'));
+          let currentLevel = leaves;
+          let treeDepth = this.treeData.treeDepth;
+          for (let level = 0; level < treeDepth; level++) {
+            const nextLevel = [];
+            for (let i = 0; i < currentLevel.length; i += 2) {
+              const left = currentLevel[i];
+              const right = currentLevel[i + 1] || Buffer.alloc(left.length);
+              const hash = poseidonHash(left, right, poseidon);
+              // Convert BigInt to Buffer
+              const hashBuf = Buffer.from(hash.toString(16).padStart(64, '0'), 'hex');
+              nextLevel.push(hashBuf);
+            }
+            currentLevel = nextLevel;
+          }
+          const computedRoot = '0x' + currentLevel[0].toString('hex');
+          if (computedRoot !== this.treeData.root) {
+            throw new Error('Tree root mismatch - data may be corrupted');
+          }
       
       // Check freshness
       const ageHours = (Date.now() - this.treeData.timestamp) / (1000 * 60 * 60);
@@ -74,16 +92,13 @@ export class MerkleZKProver {
     const leafHex = '0x' + leaf.toString('hex');
     
     // Check if address is in the tree
-    const leafIndex = this.treeData.leaves.indexOf(leafHex);
-    if (leafIndex === -1) {
-      throw new Error('Address not found in contributor tree - you may need to wait for next tree update');
-    }
-    
-    console.log(`✅ Found address at leaf index ${leafIndex}`);
-    
-    // Generate Merkle proof
-    const proof = this.contributorTree.getHexProof(leaf);
-    
+        const lowerAddr = walletAddress.toLowerCase();
+        const leafHexStr = ethers.keccak256(Buffer.from(lowerAddr, 'utf8'));
+        const leafBuf = Buffer.from(leafHexStr.slice(2), 'hex');
+        const leafIdx = this.treeData.leaves.findIndex(l => l.toLowerCase() === leafHexStr.toLowerCase());
+        if (leafIdx === -1) {
+          throw new Error('Address not found in contributor tree - you may need to wait for next tree update');
+        }
     console.log(`✅ Generated proof with ${proof.length} hashes`);
     
     // Generate unique commitment (prevents replay attacks)
@@ -163,15 +178,15 @@ export class MerkleZKProver {
    * @returns {boolean} True if in tree
    */
   isInTree(walletAddress) {
-  if (!this.treeData) return false;
-  // Derive the leaf as in backend: keccak256(lowercase address), padded to 64 hex chars
-  const addr = walletAddress.toLowerCase();
-  const leafBigInt = BigInt(addr);
-  const hex = leafBigInt.toString(16).padStart(64, '0');
-  const leaf = '0x' + hex;
-  return this.treeData.leaves.includes(leaf);
+    if (!this.treeData) return false;
+    const lowerAddr = walletAddress.toLowerCase();
+    const leafHexStr = ethers.keccak256(Buffer.from(lowerAddr, 'utf8'));
+    return this.treeData.leaves.some(l => l.toLowerCase() === leafHexStr.toLowerCase());
   }
 }
 
-// Singleton instance
-export const zkProver = new MerkleZKProver();
+// Export for CommonJS (Node.js/Next.js compatibility)
+module.exports = {
+  MerkleZKProver,
+  zkProver: new MerkleZKProver()
+};
