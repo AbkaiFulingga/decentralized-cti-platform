@@ -163,10 +163,13 @@ export class MerkleZKProver {
    * @returns {boolean} True if in tree
    */
   isInTree(walletAddress) {
-    if (!this.treeData) return false;
-    
-    const leaf = '0x' + keccak256(walletAddress.toLowerCase()).toString('hex');
-    return this.treeData.leaves.includes(leaf);
+  if (!this.treeData) return false;
+  // Derive the leaf as in backend: keccak256(lowercase address), padded to 64 hex chars
+  const addr = walletAddress.toLowerCase();
+  const leafBigInt = BigInt(addr);
+  const hex = leafBigInt.toString(16).padStart(64, '0');
+  const leaf = '0x' + hex;
+  return this.treeData.leaves.includes(leaf);
   }
 }
 
