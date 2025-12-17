@@ -40,9 +40,14 @@ async function main() {
     const { keccak256 } = require("ethers");
     const leaves = allContributors.map(addr => {
         const lower = addr.toLowerCase();
-        // Remove 0x prefix for hashing, then add back
-        const hex = keccak256(Buffer.from(lower.replace(/^0x/, ""), "hex"));
+        // Hash the address string (as utf8, not hex!)
+        const hex = keccak256(Buffer.from(lower, "utf8"));
         return BigInt(hex);
+    });
+    // Also store the hex string for frontend compatibility
+    const leavesHex = allContributors.map(addr => {
+        const lower = addr.toLowerCase();
+        return keccak256(Buffer.from(lower, "utf8"));
     });
     console.log("✅ Converted addresses to keccak256(lowercase address) leaves");
     
@@ -147,6 +152,7 @@ async function main() {
             leafIndex: i,
             isRealContributor: i === 0
         })),
+        leaves: leavesHex,
         proofs,
         anonymityAnalysis: anonymityMetrics,
         treeDepth,
