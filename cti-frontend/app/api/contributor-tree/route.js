@@ -22,13 +22,18 @@ export async function GET() {
         const ageMs = Date.now() - treeData.timestamp;
         const ageHours = ageMs / (1000 * 60 * 60);
         
+        // Calculate contributor count from array (new format) or use field (old format)
+        const contributorCount = Array.isArray(treeData.contributors) 
+          ? treeData.contributors.length 
+          : (treeData.contributorCount || 0);
+        
         return NextResponse.json({
           success: true,
           root: treeData.root,
           leaves: treeData.leaves,
           contributors: treeData.contributors, // ✅ FIX: Include contributors array
-          contributorCount: treeData.contributorCount,
-          anonymitySetSize: treeData.contributorCount,
+          contributorCount: contributorCount,
+          anonymitySetSize: contributorCount,
           timestamp: treeData.timestamp,
           lastUpdate: treeData.lastUpdate,
           freshness: {
@@ -51,13 +56,18 @@ export async function GET() {
     const ageMs = Date.now() - treeData.timestamp;
     const ageHours = ageMs / (1000 * 60 * 60);
     
+    // Calculate contributor count from array (new format) or use field (old format)
+    const contributorCount = Array.isArray(treeData.contributors) 
+      ? treeData.contributors.length 
+      : (treeData.contributorCount || 0);
+    
     return NextResponse.json({
       success: true,
       root: treeData.root,
       leaves: treeData.leaves,
       contributors: treeData.contributors, // ✅ FIX: Include contributors array
-      contributorCount: treeData.contributorCount,
-      anonymitySetSize: treeData.contributorCount,
+      contributorCount: contributorCount,
+      anonymitySetSize: contributorCount,
       timestamp: treeData.timestamp,
       lastUpdate: treeData.lastUpdate,
       freshness: {
