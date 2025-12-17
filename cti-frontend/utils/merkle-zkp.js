@@ -185,8 +185,37 @@ export class MerkleZKProver {
   }
 }
 
-// Export for CommonJS (Node.js/Next.js compatibility)
-module.exports = {
-  MerkleZKProver,
-  zkProver: new MerkleZKProver()
-};
+// Export for ES module (Next.js compatibility)
+export class MerkleZKProver {
+  constructor() {
+    this.contributorTree = null;
+    this.treeData = null;
+    this.loaded = false;
+  }
+
+  /**
+   * Load contributor Merkle tree from backend API
+   * @returns {Promise<boolean>} True if loaded successfully
+   */
+  async loadContributorTree() {
+    try {
+      console.log('📡 Loading contributor Merkle tree...');
+      const response = await fetch('/api/contributor-tree');
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to load tree');
+      }
+      this.treeData = result;
+      // ...existing code for tree construction and verification...
+      return true;
+    } catch (error) {
+      console.error('❌ Failed to load contributor tree:', error);
+      this.loaded = false;
+      return false;
+    }
+  }
+
+  // ...existing methods (generateProof, verifyProofLocally, getAnonymitySetSize, getTreeFreshness, isInTree)...
+}
+
+export const zkProver = new MerkleZKProver();
