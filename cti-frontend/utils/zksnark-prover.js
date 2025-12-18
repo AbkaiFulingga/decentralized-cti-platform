@@ -117,23 +117,28 @@ export class ZKSnarkProver {
       throw new Error('Contributor tree not loaded');
     }
 
-    const addressBigInt = ethers.toBigInt(address);
-    const addressHex = '0x' + addressBigInt.toString(16).padStart(64, '0');
+    const normalizedAddress = address.toLowerCase();
     
     console.log('🔍 Debug getMerkleProof:');
     console.log('   Address:', address);
-    console.log('   Address as BigInt:', addressBigInt.toString());
-    console.log('   Tree leaves:', this.contributorTree.leaves);
-    console.log('   Tree contributors:', this.contributorTree.contributors);
+    console.log('   Normalized:', normalizedAddress);
+    console.log('   Tree has', this.contributorTree.contributors?.length || 0, 'contributors');
     
-    // Find leaf index
-    const leafIndex = this.contributorTree.leaves.indexOf(addressHex.toLowerCase());
-    if (leafIndex === -1) {
+    // Find leaf index by searching in contributors array (not leaves, which are hashed)
+    const leafIndex = this.contributorTree.contributors?.findIndex(
+      c => c.address.toLowerCase() === normalizedAddress
+    );
+    
+    if (leafIndex === -1 || leafIndex === undefined) {
       console.error('❌ Address not found!');
-      console.error('   Your address:', address);
-      console.error('   Addresses in tree:', this.contributorTree.contributors);
+      console.error('   Your address:', normalizedAddress);
+      console.error('   First 5 addresses in tree:', 
+        this.contributorTree.contributors?.slice(0, 5).map(c => c.address) || []
+      );
       throw new Error('Address not found in contributor tree');
     }
+    
+    console.log('✅ Found address at leaf index:', leafIndex);
 
     // Use precomputed proof from tree data (tree was built with Poseidon)
     if (this.contributorTree.proofs && this.contributorTree.proofs[leafIndex]) {

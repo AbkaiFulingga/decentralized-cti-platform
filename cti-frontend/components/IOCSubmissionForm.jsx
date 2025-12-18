@@ -8,10 +8,12 @@ import keccak256 from 'keccak256';
 import { NETWORKS, STAKING_TIERS } from '../utils/constants';
 import { zkProver } from '../utils/merkle-zkp';
 import { zksnarkProver } from '../utils/zksnark-prover';
+import { IOCEncryption, formatForIPFS, computeCIDCommitment } from '../utils/encryption';
 
 export default function IOCSubmissionForm() {
   const [iocInput, setIocInput] = useState('');
   const [privacyMode, setPrivacyMode] = useState('public');
+  const [encryptionEnabled, setEncryptionEnabled] = useState(false); // NEW: Encryption toggle
   const [selectedTier, setSelectedTier] = useState('STANDARD');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
@@ -248,22 +250,58 @@ export default function IOCSubmissionForm() {
       const merkleRootHash = '0x' + tree.getRoot().toString('hex');
       setMerkleRoot(merkleRootHash);
 
-      // Upload to IPFS
+      // Upload to IPFS (with optional encryption)
       setStatus('📤 Uploading to IPFS...');
+      
+      let uploadPayload = {
+        version: "1.0",
+        format: "cti-ioc-batch",
+        timestamp: new Date().toISOString(),
+        iocs: iocs,
+        metadata: {
+          source: privacyMode === 'anonymous' ? 'anonymous' : address,
+          network: currentNetwork.name,
+          merkleRoot: merkleRootHash,
+          encrypted: encryptionEnabled
+        }
+      };
+      
+      let encryptionKey = null;
+      
+      if (encryptionEnabled) {
+        setStatus('🔐 Encrypting IOC bundle...');
+        try {
+          const encryptor = new IOCEncryption();
+          const metadata = uploadPayload.metadata;
+          const stixBundle = {
+            iocs: uploadPayload.iocs,
+            format: uploadPayload.format,
+            timestamp: uploadPayload.timestamp
+          };
+          
+          const encrypted = await encryptor.encryptBundle(stixBundle, metadata);
+          
+          // Store key locally (WARNING: Demo only, not production safe)
+          encryptor.storeKeyLocally(encrypted.keyId, encrypted.key);
+          encryptionKey = encrypted.key;
+          
+          // Replace payload with encrypted version (no key included in upload)
+          uploadPayload = formatForIPFS(encrypted);
+          
+          console.log('✅ IOC bundle encrypted with AES-256-GCM');
+          console.log('   KeyId:', encrypted.keyId);
+          console.log('   Key stored locally (DEMO ONLY)');
+          
+          setStatus('📤 Uploading encrypted bundle to IPFS...');
+        } catch (encError) {
+          throw new Error(`Encryption failed: ${encError.message}`);
+        }
+      }
+      
       const uploadRes = await fetch('/api/pinata-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          version: "1.0",
-          format: "cti-ioc-batch",
-          timestamp: new Date().toISOString(),
-          iocs: iocs,
-          metadata: {
-            source: privacyMode === 'anonymous' ? 'anonymous' : address,
-            network: currentNetwork.name,
-            merkleRoot: merkleRootHash
-          }
-        })
+        body: JSON.stringify(uploadPayload)
       });
       
       if (!uploadRes.ok) {
@@ -850,6 +888,44 @@ Gas used: ${receipt.gasUsed.toString()}`);
                     </div>
                   </button>
                 </div>
+              </div>
+
+              {/* NEW: Encryption Toggle */}
+              <div className="bg-gradient-to-r from-purple-900/20 to-pink-900/20 p-6 rounded-xl border border-purple-500/30">
+                <label className="flex items-center justify-between cursor-pointer">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3">
+                      <span className="text-2xl">🔐</span>
+                      <div>
+                        <p className="text-white font-semibold">Client-Side Encryption (CP2)</p>
+                        <p className="text-gray-400 text-xs mt-1">
+                          Encrypt IOC data with AES-256-GCM before IPFS upload
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="checkbox"
+                      checked={encryptionEnabled}
+                      onChange={(e) => setEncryptionEnabled(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-14 h-8 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-purple-600"></div>
+                  </div>
+                </label>
+                
+                {encryptionEnabled && (
+                  <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/50 rounded-lg">
+                    <p className="text-yellow-400 text-xs flex items-start gap-2">
+                      <span>⚠️</span>
+                      <span>
+                        <strong>Proof-of-Concept:</strong> Encryption key stored in browser localStorage (vulnerable to XSS). 
+                        Production requires public-key wrapping or key escrow service (CP3 roadmap).
+                      </span>
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-700">

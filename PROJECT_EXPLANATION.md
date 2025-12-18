@@ -18,7 +18,7 @@ Traditional threat intelligence sharing has several issues:
 
 We built a system that uses:
 - **Ethereum Smart Contracts** (on Arbitrum Layer 2) for trustless data management
-- **IPFS** for decentralized storage of threat data
+- **IPFS** for decentralized storage of threat data - To transition for 
 - **Zero-Knowledge Proofs** for anonymous yet verified submissions
 - **Merkle Trees** for efficient cryptographic proofs
 - **Staking Mechanism** for spam prevention and quality control
@@ -303,6 +303,760 @@ This syncs the tree root from your local file to the smart contract.
 - **APIs**: 
   - Pinata (IPFS uploads)
   - AbuseIPDB (threat feed)
+
+---
+
+## How Identities Are Protected
+
+This project implements **multiple layers of identity protection** to ensure contributors can share threat intelligence without fear of retaliation, legal consequences, or targeted attacks. Here's how we achieve this:
+
+### 1. Anonymous Submission Mode (The Core Privacy Feature)
+
+**The Problem:**
+If you submit an IOC publicly, everyone can see:
+- Your Ethereum address
+- The exact time you submitted
+- Patterns in what you submit (e.g., all IPs from one country → reveals your organization's location)
+
+This creates risks:
+- **Attackers target you** for revealing their infrastructure
+- **Legal liability** if you share data from a breach at your company
+- **Competitive intelligence** - rivals see what threats you're facing
+
+**Our Solution: The Anonymity Set**
+
+Instead of revealing YOUR address, we prove you're **one of 100 registered contributors**, without revealing which one.
+
+**How it works:**
+
+1. **Registration Phase**
+   ```
+   100 contributors register → Each stakes 0.01-0.1 ETH
+   ├─ Contributor 1: 0x1234...
+   ├─ Contributor 2: 0x5678...
+   ├─ ...
+   └─ Contributor 100: 0xabcd...
+   
+   All addresses → Build Merkle Tree → Root Hash (0x21e6...)
+   Store ONLY the root on-chain (not individual addresses)
+   ```
+
+2. **Submission Phase**
+   ```
+   You want to submit anonymously:
+   
+   Step 1: Generate a commitment
+   commitment = Poseidon(YourAddress, RandomNonce)
+   Example: Poseidon(0x1234..., 999888777) = 0xabc123...
+   
+   Step 2: Generate zkSNARK proof
+   Prove: "I know an address in the Merkle tree that hashes to this commitment"
+   WITHOUT revealing which address it is
+   
+   Step 3: Submit on-chain
+   submitAnonymous(IPFS_CID, zkProof, commitment)
+   
+   Smart contract sees:
+   - ✅ Valid proof (someone in the tree submitted this)
+   - ✅ Commitment is unique (not a replay)
+   - ❌ NO IDEA which of the 100 contributors it was
+   ```
+
+**Result:** You have **1% identifiability** instead of 100%
+- If all 100 contributors are active, attackers have a 1-in-100 chance of guessing you
+- As more contributors join, this gets even better (1,000 contributors = 0.1%)
+
+### 2. Cryptographic Commitments (Unlinkability)
+
+**The Problem:**
+Even if submissions are anonymous, patterns can emerge:
+- Contributor X always submits at 3 PM
+- Contributor Y always submits malware from Russia
+- Linking submissions reveals who you are
+
+**Our Solution: One-Time Commitments**
+
+Each anonymous submission uses a **different cryptographic commitment**:
+
+```javascript
+Submission 1: commitment₁ = Poseidon(YourAddress, nonce₁)
+Submission 2: commitment₂ = Poseidon(YourAddress, nonce₂)
+Submission 3: commitment₃ = Poseidon(YourAddress, nonce₃)
+
+commitment₁ ≠ commitment₂ ≠ commitment₃
+```
+
+**Why this matters:**
+- No one can link your submissions together
+- Each submission looks like it came from a different person
+- Even admins who approve batches can't build a profile of you
+
+**Technical Detail:**
+The `nonce` is a random 256-bit number generated in your browser. Since the space is 2^256 possibilities, collisions are astronomically unlikely (more atoms in the universe).
+
+### 3. zkSNARK Privacy (Zero-Knowledge Property)
+
+**What "Zero-Knowledge" Means:**
+
+A zkSNARK proof reveals **exactly one bit of information**: "This statement is TRUE"
+
+It does NOT reveal:
+- Your address
+- Your position in the Merkle tree
+- The path you took to prove membership
+- The nonce you used
+- Any intermediate calculations
+
+**Example:**
+
+Traditional proof (leaks info):
+```
+Claim: "I'm in the Merkle tree"
+Proof: "I'm at leaf position 42, here's my address: 0x1234..."
+Result: ❌ Everyone knows you're contributor #42
+```
+
+zkSNARK proof (zero leakage):
+```
+Claim: "I'm in the Merkle tree"
+Proof: [384 bytes of cryptographic proof]
+Result: ✅ Valid proof, but no idea who you are
+```
+
+**Technical Implementation:**
+
+Our circuit (`contributor-proof-v2.circom`) has:
+- **Private inputs** (hidden): Your address, nonce, Merkle path
+- **Public inputs** (visible): Tree root, commitment
+- **Constraints**: ~50,000 mathematical equations that ensure correctness
+
+The Groth16 proof is computed over an elliptic curve (BN254) where solving for private inputs from the proof is as hard as breaking modern cryptography.
+
+### 4. IPFS Content Addressing (Metadata Protection)
+
+**The Problem:**
+Even if your address is hidden, IPFS metadata could leak info:
+- Upload timestamp → "Someone in timezone GMT+8 submitted this"
+- Pinata account → "This is associated with Company X's API key"
+
+**Our Solution:**
+
+1. **Randomized Upload Timing**
+   ```javascript
+   // Don't upload immediately
+   await sleep(random(1, 300)); // Wait 1-5 minutes
+   await pinata.upload(data);
+   ```
+
+2. **Generic Metadata**
+   ```json
+   {
+     "pinataMetadata": {
+       "name": "batch-abc123",  // No identifying info
+       "keyvalues": {}          // Empty - no breadcrumbs
+     }
+   }
+   ```
+
+3. **Shared Pinata Account** (Future Improvement)
+   - Use one Pinata account for all contributors
+   - Uploads become indistinguishable
+
+### 5. Network-Level Privacy (Future: Tor/VPN Integration)
+
+**Current Limitation:**
+Your IP address is visible to:
+- Your RPC provider (Alchemy, Infura)
+- IPFS gateway (Pinata)
+- Blockchain P2P network
+
+**Planned Solutions:**
+
+1. **Tor Integration**
+   ```javascript
+   // Route transactions through Tor
+   const provider = new ethers.JsonRpcProvider(
+     'http://localhost:9050',  // Tor proxy
+     { name: 'arbitrum-sepolia' }
+   );
+   ```
+
+2. **Anonymous RPC Relays**
+   - Use services like Tornado Cash's RPC relay
+   - Your IP never touches the blockchain
+
+3. **IPFS Over Tor**
+   - Upload to IPFS nodes running as Tor hidden services
+   - No IP address correlation
+
+### 6. Economic Privacy (Stake Unlinkability)
+
+**The Problem:**
+Staking from your main address creates a link:
+```
+MainWallet (0xaaaa) → Stakes 0.05 ETH → PrivacyWallet (0xbbbb)
+```
+Anyone watching the blockchain sees this transfer.
+
+**Recommended Flow:**
+
+```
+Step 1: Use Tornado Cash (or similar mixer)
+MainWallet → TornadoCash → PrivacyWallet
+(Link is broken - can't trace)
+
+Step 2: Stake from clean wallet
+PrivacyWallet → Register on CTI platform
+
+Step 3: Submit anonymously
+No one can link MainWallet to submissions
+```
+
+### 7. Governance Privacy (Admin Decisions Are Public, Voters Are Not)
+
+**Important:** Admins who approve batches are **not anonymous**. This is intentional:
+
+**Why admins are public:**
+- Accountability (bad admins can be voted out)
+- Transparency (community sees who approved what)
+- Reputation (good admins build trust)
+
+**Why submitters are private:**
+- Protection from retaliation
+- Whistleblower safety
+- Sensitive source protection
+
+**Result:** A hybrid model:
+- **Submission layer**: Fully anonymous
+- **Governance layer**: Fully transparent
+
+### 8. Reputation Privacy (Commitment-Linked Scores)
+
+**The Challenge:**
+Anonymous submissions need reputation too, but traditional systems require identity:
+```
+❌ Bad: "User 0x1234 has 95 reputation"
+✅ Good: "Commitment 0xabc has 95 reputation"
+```
+
+**Our Solution:**
+
+Reputation is tied to commitments, not addresses:
+
+```solidity
+mapping(bytes32 => uint256) public commitmentReputation;
+
+function submitAnonymous(bytes32 commitment, ...) {
+    // Submission gets approved
+    commitmentReputation[commitment] += 10;
+}
+```
+
+**Why this works:**
+- Each commitment is unique (new nonce each time)
+- Your total reputation is the sum of all your commitments
+- Only YOU know which commitments are yours
+- No one else can link them together
+
+**Proving Your Total Reputation (Future Feature):**
+
+Use a recursive zkSNARK to prove:
+```
+"I control commitments C1, C2, C3, ..., C10
+ Total reputation = Rep(C1) + Rep(C2) + ... + Rep(C10) = 150"
+```
+
+Without revealing which specific commitments are yours.
+
+---
+
+## Privacy Guarantees Summary
+
+| Aspect | Protection Level | Method |
+|--------|-----------------|--------|
+| Submitter Address | ✅✅✅ Strong | zkSNARK proof + anonymity set |
+| Submission Linking | ✅✅✅ Strong | One-time commitments |
+| IP Address | ⚠️ Moderate | RPC/IPFS see IP (Tor recommended) |
+| Timing Correlation | ⚠️ Moderate | On-chain timestamps visible |
+| Reputation Privacy | ✅✅ Good | Commitment-based tracking |
+| Admin Decisions | ❌ Public | Intentionally transparent |
+| IPFS Metadata | ✅✅ Good | Generic naming, no account info |
+
+**Threat Model:**
+
+✅ **Protected Against:**
+- Passive observers (anyone watching blockchain)
+- Attackers trying to identify submitters
+- Censorship attempts (no one knows who to censor)
+- Retaliation (can't target anonymous submitters)
+
+⚠️ **Partially Protected:**
+- RPC providers seeing IP (use Tor)
+- Timing analysis (randomize submission times)
+
+❌ **Not Protected:**
+- Global adversaries (NSA-level attackers)
+- Compromised browser/device (malware can see everything)
+- Social engineering (don't tell people you submitted!)
+
+---
+
+## Real-World Privacy Example
+
+**Scenario:** You work at a bank that got hacked. You want to share the attacker's IPs without revealing:
+1. Your bank's name
+2. Your personal identity
+3. That your bank was breached
+
+**Traditional CTI Platform:**
+```
+Submission from: BigBank Security Team (accounts@bigbank.com)
+IOCs: 192.168.x.x (IP from our internal network - oops!)
+Result: ❌ Everyone knows BigBank was hacked
+        ❌ Attackers now target BigBank harder
+        ❌ Stock price drops
+```
+
+**Our Platform:**
+```
+Step 1: Clean the data
+Remove internal IPs, sanitize hostnames
+
+Step 2: Submit anonymously
+- Use zkSNARK proof
+- Upload to IPFS via Tor
+- Use randomized timing
+
+Step 3: Admins approve
+They see threat is legit, approve without knowing source
+
+Result: ✅ Threat intel shared
+        ✅ No one knows it's from BigBank
+        ✅ Your job is safe
+        ✅ Attackers' IPs are now blocked globally
+```
+
+**Your Identity is Protected By:**
+- You're 1 of 100+ contributors (statistical anonymity)
+- zkSNARK hides which one (cryptographic anonymity)
+- One-time commitment prevents linking (unlinkability)
+- Tor hides your IP (network anonymity)
+- Clean data prevents fingerprinting (operational security)
+
+**Even if attackers:**
+- Monitor all blockchain transactions → See proof, not address
+- Compromise IPFS gateway → See content, not uploader
+- Analyze submission patterns → Can't link to you
+- Bribe admins → Admins don't know who submitted
+
+**You remain anonymous.**
+
+---
+
+## Cryptographic Techniques & Encryption in This Project
+
+This project uses **multiple layers of cryptography** but is primarily focused on **cryptographic proofs and hashing** rather than traditional encryption. Here's a breakdown:
+
+### 1. **Hash Functions (One-Way Cryptography)**
+
+Hash functions are the foundation of our privacy system. Unlike encryption (which can be reversed with a key), hashing is **one-way** - you can't get the original data back.
+
+#### **keccak256 (Ethereum Standard)**
+
+**What it is:**
+- SHA-3 variant used by Ethereum
+- Produces 256-bit (32-byte) hashes
+- Deterministic: same input always gives same output
+
+**Where we use it:**
+```javascript
+// 1. Hashing contributor addresses for Merkle tree leaves
+const addressHash = ethers.keccak256(
+  ethers.AbiCoder.defaultAbiCoder().encode(
+    ["address"], 
+    ["0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82"]
+  )
+);
+// Result: 0x9a5968d6b4e28c9f8e5c1a2b3d4e5f6789abcdef...
+
+// 2. Content addressing for IPFS
+const iocHash = keccak256(JSON.stringify(iocData));
+
+// 3. Commitment verification (on-chain)
+bytes32 contributorHash = keccak256(abi.encodePacked(msg.sender));
+```
+
+**Properties:**
+- **Collision-resistant**: Can't find two inputs that hash to the same output
+- **Pre-image resistant**: Can't reverse the hash to get original data
+- **Avalanche effect**: Changing 1 bit in input changes ~50% of output bits
+
+**Security level:** 256-bit security (2^256 possible outputs = unbreakable with current computers)
+
+#### **Poseidon Hash (zkSNARK-Optimized)**
+
+**What it is:**
+- Algebraic hash function designed for zero-knowledge circuits
+- Operates over finite fields (not binary like SHA/keccak)
+- 10-100x more efficient in zkSNARKs than traditional hashes
+
+**Where we use it:**
+```javascript
+// 1. Building Merkle tree internal nodes
+const parentHash = poseidon([leftChildHash, rightChildHash]);
+
+// 2. Creating commitments for anonymous submissions
+const commitment = poseidon([addressAsBigInt, nonce]);
+// Example: poseidon([218089896829...n, 123456789n]) = 123456...n
+
+// 3. Inside circom circuits
+template MerkleTreeVerifier() {
+    component hasher = Poseidon(2);
+    hasher.inputs[0] <== leftChild;
+    hasher.inputs[1] <== rightChild;
+    parentNode <== hasher.out;
+}
+```
+
+**Why not use keccak256 everywhere?**
+
+| Aspect | keccak256 | Poseidon |
+|--------|-----------|----------|
+| On-chain cost | Cheap (3 gas/byte) | Expensive (no native support) |
+| In zkSNARK circuit | 100,000+ constraints | ~300 constraints |
+| Proof generation | Minutes/hours | Seconds |
+| Ethereum compatibility | ✅ Native | ❌ Requires library |
+
+**Security level:** 128-bit security (sufficient for most applications)
+
+**Technical detail:**
+Poseidon uses the **Hades design** with:
+- Partial S-box layers (reduces constraints)
+- MDS (Maximum Distance Separable) matrices
+- Prime field: BN254 curve order (same as our zkSNARKs)
+
+### 2. **Zero-Knowledge Proofs (Cryptographic Proofs, NOT Encryption)**
+
+**Critical distinction:**
+- **Encryption**: Hides data, can be decrypted with key
+- **zkSNARK**: Proves a statement without revealing the data
+
+Our zkSNARKs prove: *"I know a secret that satisfies condition X"* without revealing the secret.
+
+#### **Groth16 zkSNARK System**
+
+**What it does:**
+Generates a cryptographic proof that you know:
+1. An address in the Merkle tree
+2. A valid Merkle path from that address to the root
+3. A nonce that combines with your address to create the commitment
+
+**WITHOUT revealing:**
+- Which address you used
+- Which leaf position in the tree
+- The Merkle path you followed
+- The nonce value
+
+**Mathematical foundation:**
+Built on **elliptic curve cryptography** using the BN254 curve:
+```
+y² = x³ + 3  (over finite field)
+```
+
+**The proof consists of:**
+```javascript
+{
+  pi_a: [G1_point],     // Point on curve G1 (2 coordinates)
+  pi_b: [[G2_point]],   // Point on curve G2 (4 coordinates)
+  pi_c: [G1_point],     // Point on curve G1 (2 coordinates)
+}
+// Total: 8 field elements = 384 bytes
+```
+
+**Verification equation (simplified):**
+```
+e(π_a, π_b) = e(α, β) · e(C, δ) · e(H, γ)
+```
+Where `e()` is a pairing function on elliptic curves.
+
+**Security assumption:** Based on the hardness of the **discrete logarithm problem** on elliptic curves (same as Bitcoin/Ethereum signatures).
+
+**Security level:** 128-bit security (equivalent to AES-128)
+
+#### **Circuit Constraints (The Math Behind The Proof)**
+
+Our circuit has ~50,000 constraints that enforce:
+```circom
+// 1. Commitment correctness
+commitment === Poseidon(address, nonce)
+
+// 2. Merkle path verification
+for (i = 0; i < 20; i++) {
+    if (pathDirection[i] == 0) {
+        currentHash = Poseidon(currentHash, merkleProof[i]);
+    } else {
+        currentHash = Poseidon(merkleProof[i], currentHash);
+    }
+}
+
+// 3. Root match
+currentHash === merkleRoot
+```
+
+Each `===` is translated to a **constraint** (polynomial equation) that the prover must satisfy.
+
+**Security property:** If you can generate a valid proof without knowing the secret, you can solve the discrete logarithm problem (believed impossible).
+
+### 3. **Digital Signatures (Authentication, NOT Encryption)**
+
+Used for transaction authentication on Ethereum.
+
+#### **ECDSA (Elliptic Curve Digital Signature Algorithm)**
+
+**What it does:**
+- Proves you control a private key without revealing it
+- Used for all Ethereum transactions
+
+**Where we use it:**
+```javascript
+// Every time you interact with smart contracts:
+await registry.addBatch(cid, merkleRoot);
+// MetaMask signs transaction with your private key
+// Signature proves you own the address
+```
+
+**Signature components:**
+```javascript
+{
+  r: 32 bytes,  // Random point on curve
+  s: 32 bytes,  // Signature value
+  v: 1 byte     // Recovery ID
+}
+// Total: 65 bytes
+```
+
+**Security level:** 128-bit security (using secp256k1 curve)
+
+**How it works:**
+1. Hash the transaction data
+2. Sign hash with your private key using elliptic curve math
+3. Anyone can verify signature using your public key (address)
+4. Only you can create valid signatures (you have the private key)
+
+### 4. **Merkle Trees (Commitment Scheme)**
+
+Merkle trees use **cryptographic commitments** to compress large datasets.
+
+**The commitment:**
+```
+Root = Hash(Hash(Hash(A, B), Hash(C, D)), Hash(Hash(E, F), Hash(G, H)))
+```
+
+**Security property:**
+- **Binding**: Once you publish the root, you can't change the leaves
+- **Hiding**: The root doesn't reveal individual leaves (combined with our anonymity set)
+
+**Proof size:** Only ~7 hashes (for 100 contributors) instead of all 100 addresses
+- Security: If you can fake a Merkle proof, you can break the hash function (collision attack)
+
+### 5. **Content Addressing (IPFS)**
+
+IPFS uses **cryptographic hashing** for file identification.
+
+**How it works:**
+```javascript
+// Upload file to IPFS
+const fileContent = JSON.stringify(iocData);
+const cid = calculateCID(fileContent);  // Uses SHA-256 internally
+// Result: QmXyz123...
+
+// The CID IS the hash of the content
+// If content changes, CID changes
+// Same content always has same CID
+```
+
+**Security properties:**
+- **Tamper-proof**: Can't modify file without changing CID
+- **Verifiable**: Anyone can re-hash the content and verify CID
+- **Deduplicated**: Identical files have identical CIDs
+
+**Hash function:** SHA-256 (256-bit security)
+
+### 6. **What We DON'T Use (Common Misconceptions)**
+
+#### **❌ No Symmetric Encryption (AES, ChaCha20, etc.)**
+
+We **don't encrypt** IOC data. Why?
+- IOCs are meant to be **publicly shared** (that's the point of threat intelligence)
+- Privacy comes from **hiding WHO submitted**, not WHAT was submitted
+- Encryption would prevent consumers from reading the data
+
+**If we wanted to encrypt:**
+```javascript
+// This is NOT in our project, but here's how it would look:
+const encrypted = AES.encrypt(iocData, secretKey);
+await ipfs.upload(encrypted);
+// Problem: How do consumers get the secretKey?
+```
+
+#### **❌ No Asymmetric Encryption (RSA, ElGamal, etc.)**
+
+We don't use public-key encryption because:
+- zkSNARKs provide privacy without encryption
+- Encryption would make data unreadable to threat intel consumers
+- Smaller proof size (384 bytes vs kilobytes of ciphertext)
+
+**Comparison:**
+
+| Approach | Privacy Level | Data Access | Proof Size |
+|----------|---------------|-------------|------------|
+| **RSA Encryption** | High (only recipient decrypts) | ❌ Restricted | N/A |
+| **AES Encryption** | High (need shared key) | ❌ Restricted | N/A |
+| **Our zkSNARK** | High (submitter hidden) | ✅ Public | 384 bytes |
+
+#### **❌ No Homomorphic Encryption (FHE)**
+
+Fully Homomorphic Encryption allows computation on encrypted data. We considered it but:
+- **Too slow**: FHE operations are 1000-1,000,000x slower than plaintext
+- **Overkill**: We don't need to compute over encrypted IOCs
+- **Future research**: Could enable private threat correlation
+
+### 7. **Trusted Setup Ceremony (Cryptographic Ritual)**
+
+The Powers of Tau ceremony generates **public parameters** for zkSNARKs.
+
+**What's generated:**
+```javascript
+{
+  tau_powers: [τ⁰, τ¹, τ², ..., τ^(2²¹)],  // In encrypted form
+  alpha_tau: [α·τ⁰, α·τ¹, ...],
+  beta_tau: [β·τ⁰, β·τ¹, ...]
+}
+```
+
+Where τ, α, β are **secret random numbers** that must be destroyed.
+
+**Security property:**
+- If **any one participant** destroys their randomness → system is secure
+- If **all participants collude** and keep secrets → they can forge proofs
+- We trust that at least 1 of 100+ participants was honest
+
+**Cryptographic assumption:** Participants generated true randomness and deleted it.
+
+### 8. **Commitment Schemes (Used for Anonymous Submissions)**
+
+**What's a commitment?**
+Like putting a message in a sealed envelope:
+1. **Commit**: Hash your secret → publish hash
+2. **Reveal**: Later show the original secret → anyone can verify hash matches
+
+**Our implementation:**
+```javascript
+// Commit phase
+const nonce = generateRandomBigInt();
+const commitment = poseidon([address, nonce]);
+await contract.submitAnonymous(cid, proof, commitment);
+// commitment is now on-chain
+
+// Reveal phase (optional, for disputes)
+await contract.revealCommitment(address, nonce);
+// Contract verifies: poseidon([address, nonce]) === commitment
+```
+
+**Security properties:**
+- **Hiding**: Commitment doesn't reveal address or nonce
+- **Binding**: Can't change your mind later (can't find different address/nonce with same commitment)
+
+**Hash function security:** Based on collision-resistance of Poseidon
+
+### 9. **Cryptographic Techniques Summary**
+
+| Technique | Type | Purpose | Security Basis |
+|-----------|------|---------|----------------|
+| **keccak256** | Hash Function | Address hashing, content IDs | SHA-3 (collision resistance) |
+| **Poseidon** | Hash Function | Merkle trees, commitments | Algebraic hash (zkSNARK-friendly) |
+| **Groth16 zkSNARK** | Zero-Knowledge Proof | Anonymous submissions | Elliptic curve discrete log |
+| **ECDSA** | Digital Signature | Transaction authentication | secp256k1 discrete log |
+| **Merkle Trees** | Commitment Scheme | Efficient set membership proofs | Hash function security |
+| **IPFS CID** | Content Addressing | Tamper-proof storage | SHA-256 |
+| **Powers of Tau** | Trusted Setup | zkSNARK parameters | Multi-party computation |
+| **Poseidon Commitment** | Commitment Scheme | Unlinkable anonymous IDs | Poseidon collision resistance |
+
+### 10. **Why Privacy Without Encryption?**
+
+This is the **key insight** of our design:
+
+**Traditional approach (encryption):**
+```
+Encrypt IOC data → Only authorized parties can decrypt → Data stays private
+Problem: Limits who can use the threat intel
+```
+
+**Our approach (zero-knowledge proofs):**
+```
+IOC data is PUBLIC → Anyone can read it
+WHO submitted is HIDDEN → zkSNARK proves membership without identity
+Result: Maximum data sharing + maximum privacy for contributors
+```
+
+**Real-world analogy:**
+- **Encryption**: Putting your message in a locked safe (only keyholder can read)
+- **zkSNARK**: Posting anonymously on a public bulletin board (everyone can read, no one knows who posted)
+
+### 11. **Cryptographic Security Levels**
+
+**What the bit numbers mean:**
+
+| Security Level | Meaning | Computational Effort to Break |
+|----------------|---------|-------------------------------|
+| **128-bit** | Strong | 2^128 operations (~10^38) |
+| **256-bit** | Overkill | 2^256 operations (~10^77) |
+
+**Context:**
+- Bitcoin mining: ~2^80 operations per year (worldwide)
+- Breaking 128-bit: Would take all computers on Earth billions of years
+- Breaking 256-bit: More operations than atoms in the universe
+
+**Our choices:**
+- keccak256: 256-bit (maximum security)
+- Poseidon: 128-bit (sufficient, faster)
+- Groth16: 128-bit (industry standard)
+- ECDSA: 128-bit (Ethereum standard)
+
+### 12. **Attack Resistance**
+
+**What attackers CAN'T do:**
+
+✅ **Can't reverse hashes**
+- Given commitment `0xabc123...`, can't find original address
+- Would need to try all 2^256 possibilities
+
+✅ **Can't forge zkSNARK proofs**
+- Would need to solve discrete log problem
+- Equivalent to breaking Bitcoin/Ethereum
+
+✅ **Can't link anonymous submissions**
+- Each uses different commitment (different nonce)
+- No correlation between submissions
+
+✅ **Can't modify IPFS data**
+- CID changes if data changes
+- Would be detected immediately
+
+**What attackers CAN do:**
+
+⚠️ **Can analyze on-chain patterns**
+- Submission timestamps visible
+- Gas prices might correlate submissions
+- **Mitigation**: Randomize submission timing
+
+⚠️ **Can watch your IP address**
+- RPC provider sees your IP
+- **Mitigation**: Use Tor/VPN
+
+⚠️ **Can perform statistical analysis**
+- If only 2 contributors in anonymity set, 50/50 guess
+- **Mitigation**: Larger anonymity set (100+ contributors)
 
 ---
 

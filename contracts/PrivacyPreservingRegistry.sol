@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 contract PrivacyPreservingRegistry is Ownable {
     struct Batch {
-        string cid;
+        bytes32 cidCommitment;  // keccak256(CID) for privacy
         bytes32 merkleRoot;
         uint256 timestamp;
         bool accepted;
@@ -65,8 +65,8 @@ contract PrivacyPreservingRegistry is Ownable {
     uint256 public totalContributors;
     uint256 public totalAnonymousContributors;
     
-    event BatchAdded(uint256 indexed index, string cid, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash);
-    event BatchAddedWithZKProof(uint256 indexed index, string cid, bytes32 merkleRoot, uint256 commitment, uint256 contributorMerkleRoot);
+    event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash);
+    event BatchAddedWithZKProof(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, uint256 commitment, uint256 contributorMerkleRoot);
     event ContributorRegistered(address indexed contributor, uint256 stake, uint256 tier);
     event AnonymousContributorRegistered(bytes32 indexed commitment, uint256 stake, uint256 tier);
     event ReputationUpdated(bytes32 indexed contributorHash, uint256 newScore, bool isPublic);
@@ -176,7 +176,7 @@ contract PrivacyPreservingRegistry is Ownable {
         emit NullifierUsed(nullifier);
     }
     
-    // BATCH SUBMISSION WITH 1% FEE
+    // BATCH SUBMISSION WITH CID COMMITMENT (Privacy-Enhanced)
     function addBatch(
         string memory cid,
         bytes32 merkleRoot,
@@ -185,6 +185,9 @@ contract PrivacyPreservingRegistry is Ownable {
         bytes memory zkpProof
     ) public payable {
         bytes32 contributorHash;
+        
+        // Compute CID commitment for on-chain storage
+        bytes32 cidCommitment = keccak256(abi.encodePacked(cid));
         
         // Calculate 1% submission fee for admin reward pool
         uint256 estimatedGasCost = 200000 * tx.gasprice;
@@ -214,7 +217,7 @@ contract PrivacyPreservingRegistry is Ownable {
         }
         
         batches.push(Batch({
-            cid: cid,
+            cidCommitment: cidCommitment,  // Store commitment, not full CID
             merkleRoot: merkleRoot,
             timestamp: block.timestamp,
             accepted: false,
@@ -224,7 +227,8 @@ contract PrivacyPreservingRegistry is Ownable {
             falsePositiveReports: 0
         }));
         
-        emit BatchAdded(batches.length - 1, cid, merkleRoot, isPublic, contributorHash);
+        // Emit full CID in event for off-chain indexing (not stored in contract state)
+        emit BatchAdded(batches.length - 1, cid, cidCommitment, merkleRoot, isPublic, contributorHash);
     }
     
     // TIER-BASED REPUTATION BOOST ON ACCEPTANCE
@@ -461,7 +465,7 @@ contract PrivacyPreservingRegistry is Ownable {
     
     // QUERY FUNCTIONS
     function getBatch(uint256 index) public view returns (
-        string memory cid,
+        bytes32 cidCommitment,
         bytes32 merkleRoot,
         uint256 timestamp,
         bool accepted,
@@ -473,7 +477,7 @@ contract PrivacyPreservingRegistry is Ownable {
         require(index < batches.length, "Invalid batch index");
         Batch storage batch = batches[index];
         return (
-            batch.cid,
+            batch.cidCommitment,
             batch.merkleRoot,
             batch.timestamp,
             batch.accepted,
