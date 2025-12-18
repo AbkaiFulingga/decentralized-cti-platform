@@ -26,7 +26,12 @@ export class IOCEncryption {
      * @returns {Promise<CryptoKey>} Web Crypto API key object
      */
     async generateKey() {
-        return await crypto.subtle.generateKey(
+        // Check if running in browser (not SSR)
+        if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+            throw new Error('Web Crypto API not available. This function must run in a browser environment.');
+        }
+        
+        return await window.crypto.subtle.generateKey(
             {
                 name: this.algorithm,
                 length: this.keyLength
@@ -45,11 +50,16 @@ export class IOCEncryption {
      */
     async encryptBundle(stixBundle, metadata) {
         try {
+            // Check browser environment
+            if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+                throw new Error('Web Crypto API not available');
+            }
+            
             // 1. Generate unique per-file encryption key
             const key = await this.generateKey();
             
             // 2. Generate random nonce (must be unique for each encryption with same key)
-            const nonce = crypto.getRandomValues(new Uint8Array(this.nonceLength));
+            const nonce = window.crypto.getRandomValues(new Uint8Array(this.nonceLength));
             
             // 3. Compute AAD (Additional Authenticated Data) from metadata
             // This binds ciphertext to metadata, preventing substitution attacks
@@ -62,7 +72,7 @@ export class IOCEncryption {
             const plaintext = encoder.encode(JSON.stringify(stixBundle));
             
             // 5. Perform authenticated encryption
-            const ciphertext = await crypto.subtle.encrypt(
+            const ciphertext = await window.crypto.subtle.encrypt(
                 {
                     name: this.algorithm,
                     iv: nonce,
@@ -74,7 +84,7 @@ export class IOCEncryption {
             );
             
             // 6. Export key for storage/transmission
-            const exportedKey = await crypto.subtle.exportKey('raw', key);
+            const exportedKey = await window.crypto.subtle.exportKey('raw', key);
             const keyBytes = new Uint8Array(exportedKey);
             
             // 7. Compute keyId (hash of key, safe to store publicly)
@@ -114,6 +124,11 @@ export class IOCEncryption {
      */
     async decryptBundle(ciphertext, key, nonce, authTag, metadataHash) {
         try {
+            // Check browser environment
+            if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
+                throw new Error('Web Crypto API not available');
+            }
+            
             // 1. Convert arrays to Uint8Array if needed
             const ciphertextArray = ciphertext instanceof Uint8Array ? ciphertext : new Uint8Array(ciphertext);
             const keyArray = key instanceof Uint8Array ? key : new Uint8Array(key);
@@ -126,7 +141,7 @@ export class IOCEncryption {
             fullCiphertext.set(authTagArray, ciphertextArray.length);
             
             // 3. Import key
-            const importedKey = await crypto.subtle.importKey(
+            const importedKey = await window.crypto.subtle.importKey(
                 'raw',
                 keyArray,
                 {
@@ -141,7 +156,7 @@ export class IOCEncryption {
             const aad = ethers.getBytes(metadataHash);
             
             // 5. Perform authenticated decryption
-            const decrypted = await crypto.subtle.decrypt(
+            const decrypted = await window.crypto.subtle.decrypt(
                 {
                     name: this.algorithm,
                     iv: nonceArray,
