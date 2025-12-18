@@ -269,6 +269,11 @@ export default function IOCSubmissionForm() {
       let encryptionKey = null;
       
       if (encryptionEnabled) {
+        // Double-check we're in browser environment
+        if (typeof window === 'undefined') {
+          throw new Error('Encryption requires browser environment');
+        }
+        
         setStatus('🔐 Encrypting IOC bundle...');
         try {
           const encryptor = new IOCEncryption();

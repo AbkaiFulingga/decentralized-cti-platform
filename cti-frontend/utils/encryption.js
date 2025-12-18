@@ -50,9 +50,13 @@ export class IOCEncryption {
      */
     async encryptBundle(stixBundle, metadata) {
         try {
-            // Check browser environment
-            if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-                throw new Error('Web Crypto API not available');
+            // Check browser environment first
+            if (typeof window === 'undefined') {
+                throw new Error('Encryption must run in browser (not SSR)');
+            }
+            
+            if (!window.crypto || !window.crypto.subtle) {
+                throw new Error('Web Crypto API not available in this browser');
             }
             
             // 1. Generate unique per-file encryption key
