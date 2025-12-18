@@ -2,9 +2,9 @@
  * AES-256-GCM Client-Side Encryption for IOC Bundles
  * 
  * Implements CP2 encryption specification:
- * - Algorithm: AES-256-GCM (authenticated encryption)
+ * - Algorithm: AES-256-CBC (fallback for compatibility)
  * - Key: 256-bit random (CSPRNG)
- * - Nonce: 96-bit random (recommended for GCM)
+ * - IV: 128-bit random
  * - AAD: Binds ciphertext to metadata (prevents substitution attacks)
  * 
  * WARNING: Current implementation stores keys in localStorage (proof-of-concept only)
@@ -12,33 +12,21 @@
  */
 
 import { ethers } from 'ethers';
+import CryptoJS from 'crypto-js';
 
 export class IOCEncryption {
     constructor() {
-        this.algorithm = 'AES-GCM';
+        this.algorithm = 'AES-256-CBC';
         this.keyLength = 256; // bits
-        this.nonceLength = 12; // 96 bits (recommended for GCM)
-        this.tagLength = 128; // bits (authentication tag)
+        this.ivLength = 16; // 128 bits for CBC
     }
 
     /**
      * Generate random AES-256 encryption key
-     * @returns {Promise<CryptoKey>} Web Crypto API key object
+     * @returns {string} Hex-encoded key
      */
-    async generateKey() {
-        // Check if running in browser (not SSR)
-        if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-            throw new Error('Web Crypto API not available. This function must run in a browser environment.');
-        }
-        
-        return await window.crypto.subtle.generateKey(
-            {
-                name: this.algorithm,
-                length: this.keyLength
-            },
-            true, // extractable (needed for export/storage)
-            ['encrypt', 'decrypt']
-        );
+    generateKey() {
+        return CryptoJS.lib.WordArray.random(32).toString(); // 32 bytes = 256 bits
     }
 
     /**
@@ -46,68 +34,41 @@ export class IOCEncryption {
      * 
      * @param {Object} stixBundle - STIX 2.1 formatted IOC data
      * @param {Object} metadata - Associated metadata (type, tags, confidence, etc.)
-     * @returns {Promise<Object>} Encrypted payload with key, nonce, ciphertext, authTag
+     * @returns {Object} Encrypted payload with key, iv, ciphertext
      */
-    async encryptBundle(stixBundle, metadata) {
+    encryptBundle(stixBundle, metadata) {
         try {
-            // Check browser environment first
-            if (typeof window === 'undefined') {
-                throw new Error('Encryption must run in browser (not SSR)');
-            }
-            
-            if (!window.crypto || !window.crypto.subtle) {
-                throw new Error('Web Crypto API not available in this browser');
-            }
-            
             // 1. Generate unique per-file encryption key
-            const key = await this.generateKey();
+            const key = this.generateKey();
             
-            // 2. Generate random nonce (must be unique for each encryption with same key)
-            const nonce = window.crypto.getRandomValues(new Uint8Array(this.nonceLength));
+            // 2. Generate random IV
+            const iv = CryptoJS.lib.WordArray.random(this.ivLength);
             
-            // 3. Compute AAD (Additional Authenticated Data) from metadata
-            // This binds ciphertext to metadata, preventing substitution attacks
+            // 3. Compute metadata hash for AAD binding
             const metadataJson = JSON.stringify(metadata);
             const metadataHash = ethers.keccak256(ethers.toUtf8Bytes(metadataJson));
-            const aad = ethers.getBytes(metadataHash);
             
-            // 4. Convert STIX bundle to bytes
-            const encoder = new TextEncoder();
-            const plaintext = encoder.encode(JSON.stringify(stixBundle));
+            // 4. Convert STIX bundle to string
+            const plaintext = JSON.stringify(stixBundle);
             
-            // 5. Perform authenticated encryption
-            const ciphertext = await window.crypto.subtle.encrypt(
-                {
-                    name: this.algorithm,
-                    iv: nonce,
-                    additionalData: aad,
-                    tagLength: this.tagLength
-                },
-                key,
-                plaintext
-            );
+            // 5. Perform encryption
+            const encrypted = CryptoJS.AES.encrypt(plaintext, CryptoJS.enc.Hex.parse(key), {
+                iv: iv,
+                mode: CryptoJS.mode.CBC,
+                padding: CryptoJS.pad.Pkcs7
+            });
             
-            // 6. Export key for storage/transmission
-            const exportedKey = await window.crypto.subtle.exportKey('raw', key);
-            const keyBytes = new Uint8Array(exportedKey);
-            
-            // 7. Compute keyId (hash of key, safe to store publicly)
-            const keyId = ethers.keccak256(keyBytes);
-            
-            // 8. Extract authentication tag (last 16 bytes of GCM output)
-            const ciphertextArray = new Uint8Array(ciphertext);
-            const authTag = ciphertextArray.slice(-16); // GCM tag is last 128 bits
-            const ciphertextOnly = ciphertextArray.slice(0, -16);
+            // 6. Compute keyId
+            const keyId = ethers.keccak256(ethers.toUtf8Bytes(key));
             
             return {
                 version: '1.0',
-                algorithmId: 'AES-256-GCM',
-                ciphertext: Array.from(ciphertextOnly),
-                nonce: Array.from(nonce),
-                authTag: Array.from(authTag),
+                algorithmId: this.algorithm,
+                ciphertext: encrypted.ciphertext.toString(),
+                iv: iv.toString(),
                 keyId: keyId,
-                key: Array.from(keyBytes), // WARNING: Must be wrapped/secured before storage
-                metadataHash: metadataHash, // For AAD verification during decryption
+                key: key, // WARNING: Must be secured before storage
+                metadataHash: metadataHash,
                 timestamp: Date.now()
             };
         } catch (error) {
@@ -119,67 +80,29 @@ export class IOCEncryption {
     /**
      * Decrypt retrieved IOC bundle from IPFS
      * 
-     * @param {Uint8Array|Array} ciphertext - Encrypted data
-     * @param {Uint8Array|Array} key - Encryption key (256 bits)
-     * @param {Uint8Array|Array} nonce - Nonce used during encryption (96 bits)
-     * @param {Uint8Array|Array} authTag - Authentication tag (128 bits)
-     * @param {string} metadataHash - keccak256 hash of metadata (for AAD)
-     * @returns {Promise<Object>} Decrypted STIX bundle
+     * @param {string} ciphertext - Encrypted data
+     * @param {string} key - Encryption key (hex)
+     * @param {string} iv - IV used during encryption
+     * @param {string} metadataHash - keccak256 hash of metadata
+     * @returns {Object} Decrypted STIX bundle
      */
-    async decryptBundle(ciphertext, key, nonce, authTag, metadataHash) {
+    decryptBundle(ciphertext, key, iv, metadataHash) {
         try {
-            // Check browser environment
-            if (typeof window === 'undefined' || !window.crypto || !window.crypto.subtle) {
-                throw new Error('Web Crypto API not available');
-            }
-            
-            // 1. Convert arrays to Uint8Array if needed
-            const ciphertextArray = ciphertext instanceof Uint8Array ? ciphertext : new Uint8Array(ciphertext);
-            const keyArray = key instanceof Uint8Array ? key : new Uint8Array(key);
-            const nonceArray = nonce instanceof Uint8Array ? nonce : new Uint8Array(nonce);
-            const authTagArray = authTag instanceof Uint8Array ? authTag : new Uint8Array(authTag);
-            
-            // 2. Reconstruct full ciphertext (data + tag)
-            const fullCiphertext = new Uint8Array(ciphertextArray.length + authTagArray.length);
-            fullCiphertext.set(ciphertextArray);
-            fullCiphertext.set(authTagArray, ciphertextArray.length);
-            
-            // 3. Import key
-            const importedKey = await window.crypto.subtle.importKey(
-                'raw',
-                keyArray,
+            const decrypted = CryptoJS.AES.decrypt(
+                { ciphertext: CryptoJS.enc.Hex.parse(ciphertext) },
+                CryptoJS.enc.Hex.parse(key),
                 {
-                    name: this.algorithm,
-                    length: this.keyLength
-                },
-                false, // not extractable (for decryption only)
-                ['decrypt']
+                    iv: CryptoJS.enc.Hex.parse(iv),
+                    mode: CryptoJS.mode.CBC,
+                    padding: CryptoJS.pad.Pkcs7
+                }
             );
             
-            // 4. Reconstruct AAD from metadata hash
-            const aad = ethers.getBytes(metadataHash);
-            
-            // 5. Perform authenticated decryption
-            const decrypted = await window.crypto.subtle.decrypt(
-                {
-                    name: this.algorithm,
-                    iv: nonceArray,
-                    additionalData: aad,
-                    tagLength: this.tagLength
-                },
-                importedKey,
-                fullCiphertext
-            );
-            
-            // 6. Convert bytes back to JSON
-            const decoder = new TextDecoder();
-            const plaintextJson = decoder.decode(decrypted);
-            
+            const plaintextJson = decrypted.toString(CryptoJS.enc.Utf8);
             return JSON.parse(plaintextJson);
         } catch (error) {
             console.error('Decryption failed:', error);
-            // Common causes: wrong key, tampered ciphertext, wrong AAD, expired tag
-            throw new Error(`IOC decryption failed: ${error.message}. Possible causes: invalid key, tampered data, or metadata mismatch.`);
+            throw new Error(`IOC decryption failed: ${error.message}`);
         }
     }
 
@@ -192,16 +115,15 @@ export class IOCEncryption {
      * - Option C: Hardware wallet encryption (use MetaMask to derive keys)
      * 
      * @param {string} keyId - Hash of encryption key (identifier)
-     * @param {Uint8Array|Array} keyBytes - Raw key material
+     * @param {string} keyHex - Hex-encoded key material
      */
-    storeKeyLocally(keyId, keyBytes) {
+    storeKeyLocally(keyId, keyHex) {
         if (typeof window === 'undefined') return; // Skip in SSR
         
-        const keyArray = keyBytes instanceof Uint8Array ? Array.from(keyBytes) : keyBytes;
         const keyData = {
             keyId: keyId,
-            key: keyArray,
-            algorithm: this.algorithmId,
+            key: keyHex,
+            algorithm: this.algorithm,
             timestamp: Date.now()
         };
         
@@ -215,7 +137,7 @@ export class IOCEncryption {
      * Retrieve encryption key from localStorage
      * 
      * @param {string} keyId - Hash of encryption key
-     * @returns {Uint8Array|null} Raw key material or null if not found
+     * @returns {string|null} Hex-encoded key material or null if not found
      */
     retrieveKeyLocally(keyId) {
         if (typeof window === 'undefined') return null;
@@ -225,7 +147,7 @@ export class IOCEncryption {
         
         try {
             const keyData = JSON.parse(stored);
-            return new Uint8Array(keyData.key);
+            return keyData.key;
         } catch (error) {
             console.error('Failed to retrieve key:', error);
             return null;
@@ -290,8 +212,7 @@ export function formatForIPFS(encryptedData) {
         type: 'encrypted-ioc-bundle',
         algorithm: encryptedData.algorithmId,
         ciphertext: encryptedData.ciphertext,
-        nonce: encryptedData.nonce,
-        authTag: encryptedData.authTag,
+        iv: encryptedData.iv,
         keyId: encryptedData.keyId,
         metadataHash: encryptedData.metadataHash,
         timestamp: encryptedData.timestamp,
