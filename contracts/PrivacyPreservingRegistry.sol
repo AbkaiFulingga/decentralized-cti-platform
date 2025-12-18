@@ -575,9 +575,12 @@ contract PrivacyPreservingRegistry is Ownable {
         uint256 commitment = pubSignals[0];
         bytes32 contributorHash = bytes32(commitment);
         
+        // Compute CID commitment
+        bytes32 cidCommitment = keccak256(abi.encodePacked(cid));
+        
         // Add batch as anonymous submission
         batches.push(Batch({
-            cid: cid,
+            cidCommitment: cidCommitment,
             merkleRoot: merkleRoot,
             timestamp: block.timestamp,
             accepted: false,
@@ -587,8 +590,8 @@ contract PrivacyPreservingRegistry is Ownable {
             falsePositiveReports: 0
         }));
         
-        emit BatchAddedWithZKProof(batches.length - 1, cid, merkleRoot, commitment, pubSignals[1]);
-        emit BatchAdded(batches.length - 1, cid, merkleRoot, false, contributorHash);
+        emit BatchAddedWithZKProof(batches.length - 1, cid, cidCommitment, merkleRoot, commitment, pubSignals[1]);
+        emit BatchAdded(batches.length - 1, cid, cidCommitment, merkleRoot, false, contributorHash);
     }
     
     // ✅ Get ZKVerifier address
