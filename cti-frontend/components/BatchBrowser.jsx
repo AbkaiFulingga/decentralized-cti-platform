@@ -499,7 +499,7 @@ export default function BatchBrowser() {
                           <div>
                             <span className="text-gray-500">IPFS CID:</span>
                             <p className="text-blue-400 font-mono break-all">
-                              {batch.cid.substring(0, 20)}...
+                              {batch.cid ? `${batch.cid.substring(0, 20)}...` : 'Not available (check events)'}
                             </p>
                           </div>
                           
@@ -605,14 +605,16 @@ export default function BatchBrowser() {
                               🔗 View on {batch.network.includes('Ethereum') ? 'Etherscan' : 'Arbiscan'}
                             </a>
                             
-                            <a
-                              href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
-                            >
-                              📦 View on IPFS
-                            </a>
+                            {batch.cid && (
+                              <a
+                                href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
+                              >
+                                📦 View on IPFS
+                              </a>
+                            )}
                           </div>
                         </div>
                       )}
