@@ -161,6 +161,50 @@ contract ZKVerifier {
     }
     
     /**
+     * @notice Verify and register proof (called by PrivacyPreservingRegistry)
+     * @dev This is the interface expected by addBatchWithZKProof
+     * @param pA Proof component A
+     * @param pB Proof component B
+     * @param pC Proof component C
+     * @param pubSignals Public signals [commitment, merkleRoot]
+     * @return bool True if proof is valid
+     */
+    function verifyAndRegisterProof(
+        uint256[2] calldata pA,
+        uint256[2][2] calldata pB,
+        uint256[2] calldata pC,
+        uint256[2] calldata pubSignals
+    ) external returns (bool) {
+        uint256 commitment = pubSignals[0];
+        uint256 merkleRoot = pubSignals[1];
+        
+        // 1. Check commitment hasn't been used
+        if (usedCommitments[commitment]) {
+            revert CommitmentAlreadyUsed();
+        }
+        
+        // 2. Validate Merkle root is current or recent
+        if (!validMerkleRoots[merkleRoot]) {
+            revert InvalidMerkleRoot();
+        }
+        
+        // 3. Verify the zkSNARK proof
+        bool proofValid = groth16Verifier.verifyProof(pA, pB, pC, pubSignals);
+        
+        if (!proofValid) {
+            revert InvalidProof();
+        }
+        
+        // 4. Mark commitment as used
+        usedCommitments[commitment] = true;
+        
+        emit ProofVerified(commitment, merkleRoot, msg.sender, block.timestamp);
+        emit CommitmentUsed(commitment, block.timestamp);
+        
+        return true;
+    }
+
+    /**
      * @notice Verify proof without state changes (view function)
      * @dev Useful for frontend validation before submitting transaction
      */
