@@ -136,12 +136,17 @@ export default function BatchBrowser() {
       // Combine and sort events by batch index
       const allEvents = [...batchAddedEvents, ...batchZKEvents];
       const cidMap = {};
-      allEvents.forEach(event => {
+      allEvents.forEach((event, idx) => {
+        console.log(`Event ${idx}:`, {
+          index: event.args.index,
+          cid: event.args.cid,
+          allArgs: event.args
+        });
         const batchIndex = Number(event.args.index);
         cidMap[batchIndex] = event.args.cid;
       });
       
-      console.log(`Found ${Object.keys(cidMap).length} CIDs from events`);
+      console.log(`Found ${Object.keys(cidMap).length} CIDs from events`, cidMap);
       
       const batchesData = [];
       
