@@ -199,11 +199,9 @@ export class ZKSnarkProver {
    * Generate Groth16 zkSNARK proof for anonymous submission
    * 
    * @param {string} address - Contributor's Ethereum address
-   * @param {string} contractAddress - Registry contract address for binding
-   * @param {number} chainId - Chain ID for binding
    * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment}
    */
-  async generateGroth16Proof(address, contractAddress, chainId) {
+  async generateGroth16Proof(address) {
     // Load snarkjs dynamically if not already loaded
     if (!snarkjs) {
       console.log('📦 Loading snarkjs library...');
@@ -255,17 +253,13 @@ export class ZKSnarkProver {
       console.log(`   ✅ Nonce: ${nonce.toString().substring(0, 20)}...`);
 
       // Step 3: Calculate commitment using Poseidon hash
-      // Commitment = Poseidon(address, nonce, chainId, contractAddress)
+      // Commitment = Poseidon(address, nonce) - matches contributor-proof.circom
       console.log('🔐 Step 3: Computing Poseidon commitment...');
       const addressBigInt = ethers.toBigInt(address);
-      const chainIdBigInt = ethers.toBigInt(chainId);
-      const contractAddressBigInt = ethers.toBigInt(contractAddress);
       
       // Use Poseidon hash from snarkjs (same as circuit)
       const poseidon = await this.buildPoseidon();
-      const commitmentHash = poseidon.F.toString(
-        poseidon([addressBigInt, nonce, chainIdBigInt, contractAddressBigInt])
-      );
+      const commitmentHash = poseidon.F.toString(poseidon([addressBigInt, nonce]));
       const commitment = '0x' + BigInt(commitmentHash).toString(16).padStart(64, '0');
       
       console.log(`   ✅ Commitment: ${commitment}`);
@@ -285,11 +279,9 @@ export class ZKSnarkProver {
       }
 
       const circuitInputs = {
-        // Public inputs
+        // Public inputs (must match circuit: commitment, merkleRoot)
         commitment: ethers.toBigInt(commitment),
-        merkleRoot: ethers.toBigInt(contributorTreeRoot), // ✅ FIX: Use contributorTreeRoot
-        chainId: chainIdBigInt,
-        contractAddress: contractAddressBigInt,
+        merkleRoot: ethers.toBigInt(contributorTreeRoot),
         
         // Private inputs
         address: addressBigInt,
@@ -301,8 +293,6 @@ export class ZKSnarkProver {
       console.log('   ✅ Circuit inputs prepared');
       console.log(`   - Address: ${circuitInputs.address.toString().substring(0, 20)}...`);
       console.log(`   - Nonce: ${circuitInputs.nonce.toString().substring(0, 20)}...`);
-      console.log(`   - Chain ID: ${circuitInputs.chainId.toString()}`);
-      console.log(`   - Contract: ${contractAddress}`);
       console.log(`   - Merkle proof depth: ${merkleProofData.pathElements.length}`);
 
       // Step 5: Generate witness

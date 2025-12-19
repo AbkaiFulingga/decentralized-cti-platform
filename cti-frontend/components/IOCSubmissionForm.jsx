@@ -379,20 +379,9 @@ export default function IOCSubmissionForm() {
           
           setProofProgress('Computing witness (may take 10-30 seconds)...');
           
-          // Get chainId and contract address for proof binding
-          const chainId = currentNetwork.chainId;
-          const contractAddress = currentNetwork.contracts.registry;
-          
-          console.log('🔗 Proof binding parameters:');
-          console.log(`   Chain ID: ${chainId}`);
-          console.log(`   Contract: ${contractAddress}`);
-          
-          // ✅ FIX: Pass chainId and contractAddress to bind proof to specific deployment
-          const proof = await zksnarkProver.generateGroth16Proof(
-            address,
-            contractAddress,
-            chainId
-          );
+          // Generate zkSNARK proof using contributor-proof.circom (simple 2-input Poseidon)
+          // Proves: commitment = Poseidon(address, nonce) AND address in Merkle tree
+          const proof = await zksnarkProver.generateGroth16Proof(address);
           
           const proofTime = Date.now() - startTime;
           console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);
