@@ -143,12 +143,20 @@ export class ZKSnarkProver {
     // Use precomputed proof from tree data (tree was built with Poseidon)
     // Proofs are stored as array, find by matching leafIndex or address
     if (this.contributorTree.proofs && Array.isArray(this.contributorTree.proofs)) {
+      console.log('🔍 Searching for proof in tree.proofs array...');
+      console.log('   Proofs array length:', this.contributorTree.proofs.length);
+      console.log('   Looking for leafIndex:', leafIndex);
+      console.log('   Looking for address:', normalizedAddress);
+      
       const proofData = this.contributorTree.proofs.find(
         p => p.leafIndex === leafIndex || p.address.toLowerCase() === normalizedAddress
       );
       
+      console.log('   Proof found?', !!proofData);
+      
       if (proofData && proofData.proof) {
         console.log('✅ Using precomputed Poseidon proof');
+        console.log('   Proof elements:', proofData.proof.length);
         
         // Convert proof array to pathElements format
         // Generate pathIndices from leafIndex (binary representation)
@@ -165,7 +173,18 @@ export class ZKSnarkProver {
           leaf: this.contributorTree.leaves[leafIndex],
           root: this.contributorTree.root
         };
+      } else {
+        console.error('❌ Proof data structure issue:');
+        console.error('   proofData exists?', !!proofData);
+        console.error('   proofData.proof exists?', !!(proofData && proofData.proof));
+        if (proofData) {
+          console.error('   proofData keys:', Object.keys(proofData));
+        }
       }
+    } else {
+      console.error('❌ Tree proofs not available:');
+      console.error('   this.contributorTree.proofs exists?', !!this.contributorTree.proofs);
+      console.error('   Is array?', Array.isArray(this.contributorTree.proofs));
     }
 
     throw new Error('Proof not found in tree data - tree needs to be rebuilt with proofs');
@@ -199,7 +218,8 @@ export class ZKSnarkProver {
       const merkleProofData = this.getMerkleProof(address);
       
       console.log(`   ✅ Leaf: ${merkleProofData.leaf}`);
-      console.log(`   ✅ Proof elements: ${merkleProofData.proof.length}`);
+      console.log(`   ✅ Path elements: ${merkleProofData.pathElements?.length || 0}`);
+      console.log(`   ✅ Path indices: ${merkleProofData.pathIndices?.length || 0}`);
       console.log(`   ✅ Root: ${merkleProofData.root}`);
 
       // ✅ FIX: Use contributor tree root from loaded tree data
@@ -233,7 +253,7 @@ export class ZKSnarkProver {
       
       // Pad Merkle proof to 20 levels (circuit expects fixed-size arrays)
       const MERKLE_TREE_LEVELS = 20;
-      const paddedProof = merkleProofData.proof.map(p => ethers.toBigInt(p));
+      const paddedProof = merkleProofData.pathElements.map(p => ethers.toBigInt(p));
       const paddedIndices = merkleProofData.pathIndices;
       
       // Pad with zeros to reach required depth
@@ -257,7 +277,7 @@ export class ZKSnarkProver {
       console.log('   ✅ Circuit inputs prepared');
       console.log(`   - Address: ${circuitInputs.address.toString().substring(0, 20)}...`);
       console.log(`   - Nonce: ${circuitInputs.nonce.toString().substring(0, 20)}...`);
-      console.log(`   - Merkle proof depth: ${merkleProofData.proof.length}`);
+      console.log(`   - Merkle proof depth: ${merkleProofData.pathElements.length}`);
 
       // Step 5: Generate witness
       console.log('⚙️  Step 4: Computing witness (calculating circuit)...');
