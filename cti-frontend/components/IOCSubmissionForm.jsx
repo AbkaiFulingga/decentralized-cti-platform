@@ -378,8 +378,21 @@ export default function IOCSubmissionForm() {
           const startTime = Date.now();
           
           setProofProgress('Computing witness (may take 10-30 seconds)...');
-          // ✅ FIX: Don't pass IOC merkleRoot - the prover uses contributor tree root internally
-          const proof = await zksnarkProver.generateGroth16Proof(address);
+          
+          // Get chainId and contract address for proof binding
+          const chainId = currentNetwork.chainId;
+          const contractAddress = currentNetwork.contracts.registry;
+          
+          console.log('🔗 Proof binding parameters:');
+          console.log(`   Chain ID: ${chainId}`);
+          console.log(`   Contract: ${contractAddress}`);
+          
+          // ✅ FIX: Pass chainId and contractAddress to bind proof to specific deployment
+          const proof = await zksnarkProver.generateGroth16Proof(
+            address,
+            contractAddress,
+            chainId
+          );
           
           const proofTime = Date.now() - startTime;
           console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);
