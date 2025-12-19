@@ -156,8 +156,8 @@ export default function BatchBrowser() {
           
           await new Promise(resolve => setTimeout(resolve, 500));
           
-          // Get CID from event map
-          const cid = cidMap[i];
+          // Get CID from event map (convert to string key)
+          const cid = cidMap[i.toString()];
           
           if (!cid) {
             console.warn(`No CID found for batch ${i} from events`);
