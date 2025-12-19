@@ -111,7 +111,9 @@ export default function BatchBrowser() {
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)",
+        "event BatchAddedWithZKProof(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, uint256 commitment, uint256 contributorMerkleRoot)"
       ];
       
       const registry = new ethers.Contract(registryAddress, registryABI, provider);
@@ -121,6 +123,26 @@ export default function BatchBrowser() {
       
       console.log(`Loading ${count} batches from ${network.name}...`);
       
+      // Fetch all batch events to get CIDs
+      console.log(`Fetching events for CIDs from ${network.name}...`);
+      const batchAddedFilter = registry.filters.BatchAdded();
+      const batchZKFilter = registry.filters.BatchAddedWithZKProof();
+      
+      const [batchAddedEvents, batchZKEvents] = await Promise.all([
+        registry.queryFilter(batchAddedFilter, 0, 'latest').catch(() => []),
+        registry.queryFilter(batchZKFilter, 0, 'latest').catch(() => [])
+      ]);
+      
+      // Combine and sort events by batch index
+      const allEvents = [...batchAddedEvents, ...batchZKEvents];
+      const cidMap = {};
+      allEvents.forEach(event => {
+        const batchIndex = Number(event.args.index);
+        cidMap[batchIndex] = event.args.cid;
+      });
+      
+      console.log(`Found ${Object.keys(cidMap).length} CIDs from events`);
+      
       const batchesData = [];
       
       for (let i = 0; i < count; i++) {
@@ -129,7 +151,33 @@ export default function BatchBrowser() {
           
           await new Promise(resolve => setTimeout(resolve, 500));
           
-          const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+          // Get CID from event map
+          const cid = cidMap[i];
+          
+          if (!cid) {
+            console.warn(`No CID found for batch ${i} from events`);
+            batchesData.push({
+              id: i,
+              network: network.name,
+              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+              chainId: network.chainId,
+              cidCommitment: batch[0],
+              merkleRoot: batch[1],
+              timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
+              timestampRaw: Number(batch[2]),
+              approved: batch[3],
+              contributorHash: batch[4],
+              isPublic: batch[5],
+              voteCount: Number(batch[6]),
+              falsePositives: Number(batch[7]),
+              error: 'CID not found in events',
+              explorerUrl: network.explorerUrl,
+              registryAddress: registryAddress
+            });
+            continue;
+          }
+          
+          const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
           const result = await response.json();
           
           const timestampRaw = Number(batch[2]);
@@ -172,7 +220,8 @@ export default function BatchBrowser() {
               network: network.name,
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
               chainId: network.chainId,
-              cid: batch[0],                    // string cid
+              cid: cid,                         // string cid from events
+              cidCommitment: batch[0],          // bytes32 cidCommitment
               merkleRoot: batch[1],             // bytes32 merkleRoot
               timestamp: new Date(timestampRaw * 1000).toLocaleString(),
               timestampRaw: timestampRaw,       // uint256 timestamp
@@ -196,11 +245,13 @@ export default function BatchBrowser() {
               network: network.name,
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
               chainId: network.chainId,
-              cid: batch[0],
+              cid: cid,
+              cidCommitment: batch[0],
               merkleRoot: batch[1],
               timestamp: new Date(timestampRaw * 1000).toLocaleString(),
               timestampRaw: timestampRaw,
               approved: batch[3],
+              contributorHash: batch[4],
               isPublic: batch[5],
               voteCount: Number(batch[6]),
               falsePositives: Number(batch[7]),

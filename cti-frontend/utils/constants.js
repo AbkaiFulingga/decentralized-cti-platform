@@ -30,11 +30,11 @@ export const NETWORKS = {
       decimals: 18
     },
     contracts: {
-      registry: "0xC40827e7dF3a26dFfb7fd2B9FbEB6b3e964599AD", // NEW: Dec 19 2025 - WITH zkSNARK SUPPORT ✅
-      governance: "0x1cB4Ac87e58a6a4865BD9e68C2042e90D8c372A0", // NEW: Dec 19 2025
-      storage: "0x3BC9a984DF09b5e4CFDFA88da4F3CDBAff7CB7cd", // NEW: Dec 19 2025
-      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // SAME: Dec 3 2025 - Correctly linked to Registry
-      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE" // SAME: Existing Oracle
+      registry: "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44", // CORRECT: From test-addresses-arbitrum.json
+      governance: "0xa186FEE32e311f65C55612fc98195B27113d1e48", // CORRECT: From test-addresses-arbitrum.json
+      storage: "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd", // CORRECT: From test-addresses-arbitrum.json
+      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // Merkle ZK Registry
+      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE" // Oracle Feed
     },
     gasPrice: 0.1,
     gasPriceUnit: "Gwei"
@@ -83,8 +83,9 @@ export const CONTRACT_ABIS = {
   registry: [
     "function registerContributor(uint256 tier) external payable",
     "function addBatch(string memory cid, bytes32 merkleRoot, bool isPublic, bytes32 zkpCommitment, bytes memory zkpProof) public payable",
+    "function addBatchWithZKProof((uint256[2] a, uint256[2][2] b, uint256[2] c) proof, bytes32 commitment, bytes32 merkleRoot, string ipfsCID) external",
     "function acceptBatch(uint256 batchIndex) external",
-    "function getBatch(uint256 index) public view returns (string, bytes32, uint256, bool, bytes32, bool, uint256, uint256)",
+    "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
     "function getBatchCount() public view returns (uint256)",
     "function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256)",
     "function getPlatformStats() external view returns (uint256, uint256, uint256, uint256, uint256, uint256, uint256)",
@@ -93,7 +94,8 @@ export const CONTRACT_ABIS = {
     "function disputeBatch(uint256 batchIndex) external",
     "function MICRO_STAKE() external view returns (uint256)",
     "function STANDARD_STAKE() external view returns (uint256)",
-    "function PREMIUM_STAKE() external view returns (uint256)"
+    "function PREMIUM_STAKE() external view returns (uint256)",
+    "function batches(uint256) external view returns (bytes32 cidCommitment, string memory ipfsCID, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmationCount, uint256 falsePositiveReports, bytes32 merkleRootHash)"
   ],
   governance: [
     "function admins(address) external view returns (bool)",
