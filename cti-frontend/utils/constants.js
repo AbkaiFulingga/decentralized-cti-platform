@@ -30,10 +30,10 @@ export const NETWORKS = {
       decimals: 18
     },
     contracts: {
-      registry: "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44", // NEW: Latest deployment with ZKP fix
-      governance: "0xa186FEE32e311f65C55612fc98195B27113d1e48", // NEW: Latest deployment
-      storage: "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd", // NEW: Latest deployment
-      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // NEWEST: Dec 3 2025 - Correctly linked to Registry
+      registry: "0xC40827e7dF3a26dFfb7fd2B9FbEB6b3e964599AD", // NEW: Dec 19 2025 - WITH zkSNARK SUPPORT ✅
+      governance: "0x1cB4Ac87e58a6a4865BD9e68C2042e90D8c372A0", // NEW: Dec 19 2025
+      storage: "0x3BC9a984DF09b5e4CFDFA88da4F3CDBAff7CB7cd", // NEW: Dec 19 2025
+      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // SAME: Dec 3 2025 - Correctly linked to Registry
       oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE" // SAME: Existing Oracle
     },
     gasPrice: 0.1,
