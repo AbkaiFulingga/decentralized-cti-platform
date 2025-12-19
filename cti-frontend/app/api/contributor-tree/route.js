@@ -32,10 +32,13 @@ export async function GET() {
           root: treeData.root,
           leaves: treeData.leaves,
           contributors: treeData.contributors, // ✅ FIX: Include contributors array
+          proofs: treeData.proofs, // ✅ FIX: Include proofs array for zkSNARK generation
           contributorCount: contributorCount,
           anonymitySetSize: contributorCount,
           timestamp: treeData.timestamp,
           lastUpdate: treeData.lastUpdate,
+          treeDepth: treeData.treeDepth,
+          hashFunction: treeData.hashFunction,
           freshness: {
             ageHours: ageHours.toFixed(1),
             isStale: ageHours > 48
@@ -66,10 +69,13 @@ export async function GET() {
       root: treeData.root,
       leaves: treeData.leaves,
       contributors: treeData.contributors, // ✅ FIX: Include contributors array
+      proofs: treeData.proofs, // ✅ FIX: Include proofs array for zkSNARK generation
       contributorCount: contributorCount,
       anonymitySetSize: contributorCount,
       timestamp: treeData.timestamp,
       lastUpdate: treeData.lastUpdate,
+      treeDepth: treeData.treeDepth,
+      hashFunction: treeData.hashFunction,
       freshness: {
         ageHours: ageHours.toFixed(1),
         isStale: ageHours > 48
