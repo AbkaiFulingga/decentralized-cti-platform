@@ -170,13 +170,18 @@ export default function IOCSubmissionForm() {
         setZkpReady(true);
         setAnonymitySetSize(zkProver.getAnonymitySetSize());
         setTreeAge(zkProver.getTreeFreshness());
-        if (walletAddress) setIsInTree(zkProver.isInTree(walletAddress));
       }
       
       // Also load for zkSNARK prover
       const zksnarkLoaded = await zksnarkProver.loadContributorTree();
       if (zksnarkLoaded) {
         setZksnarkReady(true);
+        // ✅ FIX: Check using zkSNARK prover, not old Merkle prover
+        if (walletAddress) {
+          const inTree = zksnarkProver.isAddressInTree(walletAddress);
+          console.log('🔍 Address in tree check:', { walletAddress, inTree });
+          setIsInTree(inTree);
+        }
         console.log('✅ zkSNARK prover ready');
       }
     } finally {
