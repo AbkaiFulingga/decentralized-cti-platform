@@ -112,7 +112,7 @@ export class ZKSnarkProver {
    * Uses Poseidon hash (same as circuit) to reconstruct tree
    * Returns the path elements and indices needed for circuit
    */
-  async getMerkleProof(address) {
+  getMerkleProof(address) {
     if (!this.contributorTree) {
       throw new Error('Contributor tree not loaded');
     }
