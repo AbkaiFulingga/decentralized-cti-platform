@@ -36,20 +36,17 @@ async function main() {
     const poseidon = await buildPoseidon();
     const F = poseidon.F;  // Field for conversions
     
-    // Convert addresses to keccak256(lowercase address) leaves (match frontend)
-    const { keccak256 } = require("ethers");
+    // Convert addresses to BigInt directly (circuit expects raw address as leaf!)
     const leaves = allContributors.map(addr => {
-        const lower = addr.toLowerCase();
-        // Hash the address string (as utf8, not hex!)
-        const hex = keccak256(Buffer.from(lower, "utf8"));
-        return BigInt(hex);
+        return BigInt(addr);  // Convert 0x... address to BigInt
     });
-    // Also store the hex string for frontend compatibility
+    
+    // Also store as hex strings for frontend
     const leavesHex = allContributors.map(addr => {
-        const lower = addr.toLowerCase();
-        return keccak256(Buffer.from(lower, "utf8"));
+        const addrBigInt = BigInt(addr);
+        return "0x" + addrBigInt.toString(16).padStart(40, '0');
     });
-    console.log("✅ Converted addresses to keccak256(lowercase address) leaves");
+    console.log("✅ Converted addresses to BigInt leaves (raw addresses for Poseidon)");
     
     // Build tree (depth 20 supports 2^20 = 1M contributors)
     const treeDepth = 20;
