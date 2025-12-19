@@ -19,7 +19,7 @@ async function main() {
   // Step 1: Deploy new PrivacyPreservingRegistry
   console.log('\n📦 Deploying PrivacyPreservingRegistry...');
   const PrivacyPreservingRegistry = await hre.ethers.getContractFactory('PrivacyPreservingRegistry');
-  const registry = await PrivacyPreservingRegistry.deploy(deployer.address);
+  const registry = await PrivacyPreservingRegistry.deploy();
   await registry.waitForDeployment();
   
   const registryAddress = await registry.getAddress();
