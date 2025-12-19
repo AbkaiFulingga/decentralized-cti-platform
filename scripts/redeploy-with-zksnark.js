@@ -59,7 +59,7 @@ async function main() {
   // Step 6: Deploy StorageContribution
   console.log('\n📦 Deploying StorageContribution...');
   const StorageContribution = await hre.ethers.getContractFactory('StorageContribution');
-  const storage = await StorageContribution.deploy(registryAddress);
+  const storage = await StorageContribution.deploy(registryAddress, governanceAddress);
   await storage.waitForDeployment();
   
   const storageAddress = await storage.getAddress();
