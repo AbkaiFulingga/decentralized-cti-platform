@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
+import { IOCEncryption } from '../utils/encryption';
 
 export default function BatchBrowser() {
   const [batches, setBatches] = useState([]);
