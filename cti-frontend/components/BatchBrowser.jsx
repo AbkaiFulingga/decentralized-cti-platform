@@ -134,6 +134,38 @@ export default function BatchBrowser() {
           const timestampRaw = Number(batch[2]);
           
           if (result.success) {
+            // Check if data is encrypted
+            let decryptedData = null;
+            let isEncrypted = false;
+            let hasDecryptionKey = false;
+            
+            if (result.data.type === 'encrypted-ioc-bundle') {
+              isEncrypted = true;
+              
+              // Try to decrypt if we have the key
+              const encryptor = new IOCEncryption();
+              const key = encryptor.retrieveKeyLocally(result.data.keyId);
+              
+              if (key) {
+                hasDecryptionKey = true;
+                try {
+                  decryptedData = encryptor.decryptBundle(
+                    result.data.ciphertext,
+                    key,
+                    result.data.iv,
+                    result.data.metadataHash
+                  );
+                  console.log(`🔓 Successfully decrypted batch ${i}`);
+                } catch (error) {
+                  console.error(`Failed to decrypt batch ${i}:`, error);
+                }
+              }
+            }
+            
+            // Use decrypted data if available, otherwise use raw data
+            const iocData = decryptedData || result.data;
+            const iocCount = iocData.iocs ? iocData.iocs.length : 0;
+            
             batchesData.push({
               id: i,
               network: network.name,
@@ -148,8 +180,11 @@ export default function BatchBrowser() {
               isPublic: batch[5],               // bool isPublic
               voteCount: Number(batch[6]),      // uint256 confirmations
               falsePositives: Number(batch[7]), // uint256 falsePositives
-              iocCount: result.data.iocs.length,
-              iocData: result.data,
+              iocCount: iocCount,
+              iocData: iocData,
+              isEncrypted: isEncrypted,
+              hasDecryptionKey: hasDecryptionKey,
+              rawEncryptedData: isEncrypted ? result.data : null,
               gateway: result.gateway,
               explorerUrl: network.explorerUrl,
               registryAddress: registryAddress
@@ -364,6 +399,17 @@ export default function BatchBrowser() {
                                 }`}>
                                   {batch.network.includes('Ethereum') ? 'Ethereum L1' : 'Arbitrum L2'}
                                 </span>
+                                
+                                {/* Encryption Badge */}
+                                {batch.isEncrypted && (
+                                  <span className={`text-xs px-2 py-1 rounded font-semibold flex items-center gap-1 ${
+                                    batch.hasDecryptionKey
+                                      ? 'bg-green-500/20 text-green-300 border border-green-500/30'
+                                      : 'bg-orange-500/20 text-orange-300 border border-orange-500/30'
+                                  }`}>
+                                    {batch.hasDecryptionKey ? '🔓 Decrypted' : '🔒 Encrypted'}
+                                  </span>
+                                )}
                               </div>
                               <p className="text-gray-400 text-sm">
                                 {batch.iocCount || '?'} IOCs • {batch.timestamp}
@@ -411,6 +457,28 @@ export default function BatchBrowser() {
                               {batch.merkleRoot.substring(0, 10)}...{batch.merkleRoot.substring(58)}
                             </p>
                           </div>
+                          
+                          {/* Encryption Info */}
+                          {batch.isEncrypted && (
+                            <div className="col-span-2 bg-purple-900/20 border border-purple-500/30 rounded-lg p-4">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-xl">{batch.hasDecryptionKey ? '🔓' : '🔒'}</span>
+                                <span className="text-purple-300 font-semibold">
+                                  {batch.hasDecryptionKey ? 'End-to-End Encrypted (Decrypted Locally)' : 'End-to-End Encrypted (No Key Available)'}
+                                </span>
+                              </div>
+                              <div className="text-xs text-gray-400 space-y-1">
+                                <p>Algorithm: {batch.rawEncryptedData?.algorithm || 'AES-256-CBC'}</p>
+                                <p>Key ID: {batch.rawEncryptedData?.keyId?.substring(0, 20)}...{batch.rawEncryptedData?.keyId?.substring(58) || 'N/A'}</p>
+                                {!batch.hasDecryptionKey && (
+                                  <p className="text-orange-400 mt-2">⚠️ You don't have the decryption key for this batch. Only the submitter can decrypt the contents.</p>
+                                )}
+                                {batch.hasDecryptionKey && (
+                                  <p className="text-green-400 mt-2">✅ Decryption key found in your browser's localStorage. Content decrypted successfully.</p>
+                                )}
+                              </div>
+                            </div>
+                          )}
                           
                           <div>
                             <span className="text-gray-500">Community Confirmations:</span>
