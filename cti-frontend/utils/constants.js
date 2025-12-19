@@ -30,11 +30,11 @@ export const NETWORKS = {
       decimals: 18
     },
     contracts: {
-      registry: "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44", // CORRECT: From test-addresses-arbitrum.json
-      governance: "0xa186FEE32e311f65C55612fc98195B27113d1e48", // CORRECT: From test-addresses-arbitrum.json
-      storage: "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd", // CORRECT: From test-addresses-arbitrum.json
-      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // Merkle ZK Registry
-      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE" // Oracle Feed
+      registry: "0xC40827e7dF3a26dFfb7fd2B9FbEB6b3e964599AD", // zkSNARK registry (Dec 19 2025) - HAS 2 BATCHES
+      governance: "0x1cB4Ac87e58a6a4865BD9e68C2042e90D8c372A0",
+      storage: "0x3BC9a984DF09b5e4CFDFA88da4F3CDBAff7CB7cd",
+      merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61",
+      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE"
     },
     gasPrice: 0.1,
     gasPriceUnit: "Gwei"
