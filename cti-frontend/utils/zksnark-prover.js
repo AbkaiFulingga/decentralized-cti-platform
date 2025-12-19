@@ -167,11 +167,16 @@ export class ZKSnarkProver {
           idx = Math.floor(idx / 2);
         }
         
+        console.log('🔍 DEBUG: Checking root field...');
+        console.log('   this.contributorTree.root:', this.contributorTree.root);
+        console.log('   proofData.root:', proofData.root);
+        console.log('   Full contributorTree keys:', Object.keys(this.contributorTree));
+        
         return {
           pathElements: proofData.proof,
           pathIndices: pathIndices,
           leaf: this.contributorTree.leaves[leafIndex],
-          root: this.contributorTree.root
+          root: this.contributorTree.root || proofData.root  // Fallback to proofData.root if tree root missing
         };
       } else {
         console.error('❌ Proof data structure issue:');
@@ -226,7 +231,18 @@ export class ZKSnarkProver {
       const contributorTreeRoot = this.contributorTree.root;
       console.log(`   ✅ Contributor tree root: ${contributorTreeRoot}`);
       
+      console.log('🔍 DEBUG: Before root comparison...');
+      console.log('   merkleProofData.root:', merkleProofData.root);
+      console.log('   merkleProofData type:', typeof merkleProofData.root);
+      console.log('   contributorTreeRoot:', contributorTreeRoot);
+      console.log('   contributorTreeRoot type:', typeof contributorTreeRoot);
+      console.log('   merkleProofData keys:', Object.keys(merkleProofData));
+      
       // Verify root matches
+      if (!merkleProofData.root) {
+        throw new Error('❌ merkleProofData.root is undefined! Keys: ' + Object.keys(merkleProofData).join(', '));
+      }
+      
       if (merkleProofData.root.toLowerCase() !== contributorTreeRoot.toLowerCase()) {
         throw new Error(`Merkle root mismatch: ${merkleProofData.root} vs ${contributorTreeRoot}`);
       }
