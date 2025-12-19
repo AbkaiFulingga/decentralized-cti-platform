@@ -41,9 +41,9 @@ async function main() {
   console.log('\n📦 Deploying ThresholdGovernance...');
   const ThresholdGovernance = await hre.ethers.getContractFactory('ThresholdGovernance');
   const governance = await ThresholdGovernance.deploy(
-    registryAddress,
-    [deployer.address, admin2.address, admin3.address],
-    2  // 2-of-3 threshold
+    [deployer.address, admin2.address, admin3.address],  // admins array
+    2,  // threshold
+    registryAddress  // registry address
   );
   await governance.waitForDeployment();
   
