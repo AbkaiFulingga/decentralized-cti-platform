@@ -11,7 +11,7 @@ async function main() {
     console.log("🎭 Generating Test Contributors for Anonymity Set\n");
     
     // Your real address (already registered)
-    const realContributor = "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82";
+    const realContributor = "0x742d35Cc6634C0532925a3b844Bc454e4438f44e";
     
     // Generate 99 additional test addresses
     const testContributors = [];
