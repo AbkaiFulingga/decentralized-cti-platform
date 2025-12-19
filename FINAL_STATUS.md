@@ -246,11 +246,92 @@ decentralized-cti-platform-2/
 
 This repository contains the complete implementation of a decentralized CTI platform with zkSNARK-based anonymity. All code is original work developed for Final Year Project 2024-2025.
 
-**To verify the implementation**:
-1. Review `CHAPTER5_COMPLETE_RESULTS.md` for experimental results
-2. Check live transaction: https://sepolia.arbiscan.io/tx/0x581de4fd4b1a76b2e2c9cf5d1e0dc9117d0a437773d82ddd45d68214504c64e9
-3. Inspect smart contracts in `contracts/` directory
-4. Review zkSNARK circuit in `circuits/contributor-proof-v2.circom`
+### Quick Verification (5 minutes)
+
+**Automated Script**:
+```bash
+git clone https://github.com/AbkaiFulingga/decentralized-cti-platform.git
+cd decentralized-cti-platform
+./scripts/verify-zksnark-quick.sh
+```
+
+This script automatically verifies:
+- ✅ Transaction exists and succeeded
+- ✅ Function is `addBatchWithZKProof` (zkSNARK)
+- ✅ Gas usage consistent with Groth16 pairing checks (383,716 gas)
+- ✅ Event logs confirm on-chain verification
+
+**Manual Browser Verification**:
+1. Visit: https://sepolia.arbiscan.io/tx/0x581de4fd4b1a76b2e2c9cf5d1e0dc9117d0a437773d82ddd45d68214504c64e9
+2. Verify Status: ✅ Success (green checkmark)
+3. Verify Function: `addBatchWithZKProof` (Method ID: 0x8219d456)
+4. Click "Decode Input Data"
+5. Compare `commitment` ≠ `From` address (proves anonymity)
+
+### Full Replicable Demo (15 minutes)
+
+**Complete step-by-step guide**: See `ZKSNARK_DEMO_GUIDE.md`
+
+This guide provides:
+- MetaMask setup instructions
+- Arbitrum Sepolia testnet configuration  
+- Frontend submission walkthrough
+- Evidence collection procedures
+- Cryptographic verification steps
+
+**What you can verify**:
+- Submit your own anonymous batch
+- See zkSNARK proof generation (15-20s in browser)
+- Verify your commitment ≠ your address
+- Confirm on-chain proof verification
+
+### Review Documentation
+
+**Core Documentation**:
+- **ZKSNARK_DEMO_GUIDE.md**: Complete replicable demo for thesis examiners
+- **CHAPTER5_COMPLETE_RESULTS.md**: Experimental results (565 lines, real data)
+- **ZKP_ANONYMITY_PROOF.md**: Cryptographic anonymity explanation
+- **ZKSNARK_FUNCTION_FIX.md**: Bug fix history and verification process
+- **chapter4.md**: System architecture and design decisions
+
+### Verify Smart Contracts
+
+**Deployed Addresses** (Arbitrum Sepolia):
+- PrivacyPreservingRegistry: `0xC40827e7dF3a26dFfb7fd2B9FbEB6b3e964599AD`
+- ZKVerifier: `0x4faA86B38E5c5CfB63a802Cd8cd9dd0dC37a5BA0`
+- Groth16Verifier: `0xDb7c15F9992F9f25bFCC67759C2ff9468ed93bDb`
+- ThresholdGovernance: `0x1cB4Ac87e58a6a4865BD9e68C2042e90D8c372A0`
+- StorageContribution: `0x3BC9a984DF09b5e4CFDFA88da4F3CDBAff7CB7cd`
+
+**Verification Commands**:
+```bash
+# View contract on block explorer
+open https://sepolia.arbiscan.io/address/0xC40827e7dF3a26dFfb7fd2B9FbEB6b3e964599AD
+
+# Verify zkSNARK function exists
+node scripts/check-deployed-functions.js
+
+# Run verification script
+./scripts/verify-zksnark-quick.sh
+```
+
+### Test Locally (Optional)
+
+```bash
+git clone https://github.com/AbkaiFulingga/decentralized-cti-platform.git
+cd decentralized-cti-platform
+
+# Install dependencies
+npm install
+cd cti-frontend && npm install && cd ..
+
+# Run frontend
+cd cti-frontend && npm run dev
+# Visit http://localhost:3000/submit
+
+# Run automated verification
+./scripts/verify-zksnark-quick.sh
+```
 
 **All evidence is verifiable on public blockchain explorers.**
 
