@@ -89,22 +89,29 @@ export class ZKSnarkProver {
 
   /**
    * Check if address is in the contributor tree
+   * ✅ FIX: Check contributors array directly (raw addresses), not leaves (Poseidon hashes)
    */
   isAddressInTree(address) {
     if (!this.contributorTree) {
       throw new Error('Contributor tree not loaded');
     }
     
-    // Convert address to leaf format (lowercase, then hash with Poseidon would be done in circuit)
-    // For now, check if address hash exists in leaves
     const addressLower = address.toLowerCase();
     
-    // The leaves are stored as hashes, so we need to check if our address hash matches
-    // In production, this should use the same hash function as the circuit (Poseidon)
-    // For now, we use keccak256 as a placeholder
-    const leaf = ethers.keccak256(ethers.toUtf8Bytes(addressLower));
+    // ✅ FIX: The tree uses Poseidon hashing, so leaves are Poseidon(address)
+    // We can't verify with keccak256. Instead, check if address exists in contributors array
+    if (this.contributorTree.contributors && Array.isArray(this.contributorTree.contributors)) {
+      return this.contributorTree.contributors.some(
+        c => c.address.toLowerCase() === addressLower
+      );
+    }
     
-    return this.contributorTree.leaves.includes(leaf);
+    // Fallback: old tree format with just addresses array
+    if (Array.isArray(this.contributorTree.contributors)) {
+      return this.contributorTree.contributors.includes(addressLower);
+    }
+    
+    return false;
   }
 
   /**
