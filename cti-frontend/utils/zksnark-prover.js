@@ -141,15 +141,31 @@ export class ZKSnarkProver {
     console.log('✅ Found address at leaf index:', leafIndex);
 
     // Use precomputed proof from tree data (tree was built with Poseidon)
-    if (this.contributorTree.proofs && this.contributorTree.proofs[leafIndex]) {
-      const proofData = this.contributorTree.proofs[leafIndex];
-      console.log('✅ Using precomputed Poseidon proof');
-      return {
-        proof: proofData.proof,
-        pathIndices: proofData.pathIndices,
-        leaf: proofData.leaf,
-        root: this.contributorTree.root
-      };
+    // Proofs are stored as array, find by matching leafIndex or address
+    if (this.contributorTree.proofs && Array.isArray(this.contributorTree.proofs)) {
+      const proofData = this.contributorTree.proofs.find(
+        p => p.leafIndex === leafIndex || p.address.toLowerCase() === normalizedAddress
+      );
+      
+      if (proofData && proofData.proof) {
+        console.log('✅ Using precomputed Poseidon proof');
+        
+        // Convert proof array to pathElements format
+        // Generate pathIndices from leafIndex (binary representation)
+        const pathIndices = [];
+        let idx = leafIndex;
+        for (let i = 0; i < proofData.proof.length; i++) {
+          pathIndices.push(idx % 2);
+          idx = Math.floor(idx / 2);
+        }
+        
+        return {
+          pathElements: proofData.proof,
+          pathIndices: pathIndices,
+          leaf: this.contributorTree.leaves[leafIndex],
+          root: this.contributorTree.root
+        };
+      }
     }
 
     throw new Error('Proof not found in tree data - tree needs to be rebuilt with proofs');
