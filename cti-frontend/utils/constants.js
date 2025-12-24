@@ -6,6 +6,7 @@ export const NETWORKS = {
     name: "Ethereum Sepolia",
     rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/OJZ2zwAbqwG_YYm9N6vuj",
     explorerUrl: "https://sepolia.etherscan.io",
+    deploymentBlock: 7340000, // Approximate - adjust if contracts deployed earlier
     nativeCurrency: {
       name: "Sepolia ETH",
       symbol: "ETH",
@@ -24,6 +25,7 @@ export const NETWORKS = {
     name: "Arbitrum Sepolia",
     rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
     explorerUrl: "https://sepolia.arbiscan.io",
+    deploymentBlock: 96000000, // Approximate - adjust if contracts deployed earlier
     nativeCurrency: {
       name: "Arbitrum ETH",
       symbol: "ETH",

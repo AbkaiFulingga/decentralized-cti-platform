@@ -97,7 +97,8 @@ export default function AnalyticsDashboard() {
       const registryABI = [
         "function getPlatformStats() external view returns (uint256 totalBatches, uint256 totalAccepted, uint256 publicBatches, uint256 anonymousBatches, uint256 totalPublicContrib, uint256 totalAnonContrib, uint256 totalStaked)",
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
       
       const registry = new ethers.Contract(
@@ -121,12 +122,27 @@ export default function AnalyticsDashboard() {
       
       const pendingBatches = totalBatches - totalAccepted;
       
-      // Calculate total IOCs by fetching from IPFS
+      // Fetch event CIDs first
+      const batchAddedFilter = registry.filters.BatchAdded();
+      const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider, network.deploymentBlock);
+      const cidMap = {};
+      events.forEach(event => {
+        const batchIndex = Number(event.args.index);
+        cidMap[batchIndex] = event.args.cid;
+      });
+      
+      // Calculate total IOCs by fetching from IPFS using actual CIDs (not commitments)
       let totalIOCs = 0;
       for (let i = 0; i < Math.min(count, 20); i++) {
         try {
-          const batch = await registry.getBatch(i);
-          const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+          const cid = cidMap[i];
+          
+          // Skip if no CID or if it's a hex string (commitment, not actual IPFS CID)
+          if (!cid || cid.startsWith('0x') || cid.length < 10) {
+            continue;
+          }
+          
+          const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
           const result = await response.json();
           if (result.success && result.data.iocs) {
             totalIOCs += result.data.iocs.length;
@@ -253,7 +269,7 @@ export default function AnalyticsDashboard() {
         // Query events to get CIDs with smart chunked queries
         console.log(`📊 Fetching events for ${network.name}...`);
         const batchAddedFilter = registry.filters.BatchAdded();
-        const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider);
+        const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider, network.deploymentBlock);
         console.log(`✅ Fetched ${events.length} events from ${network.name}`);
         
         const cidMap = {};

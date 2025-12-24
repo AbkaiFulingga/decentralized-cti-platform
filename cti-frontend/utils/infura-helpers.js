@@ -73,14 +73,22 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
 
 /**
  * Smart event query with automatic fallback to chunked queries
+ * Optimizes by using deployment block or recent blocks instead of querying from 0
  * @param {Contract} contract - ethers Contract instance
  * @param {EventFilter} filter - Event filter
- * @param {number} fromBlock - Starting block
+ * @param {number} fromBlock - Starting block (use network.deploymentBlock for optimization)
  * @param {number|string} toBlock - Ending block or 'latest'
  * @param {Provider} provider - ethers provider
+ * @param {number} deploymentBlock - Optional deployment block for optimization
  * @returns {Promise<Array>} - Array of events
  */
-export async function smartQueryEvents(contract, filter, fromBlock, toBlock, provider) {
+export async function smartQueryEvents(contract, filter, fromBlock, toBlock, provider, deploymentBlock = null) {
+  // If fromBlock is 0 and we have deployment block, use it instead
+  if (fromBlock === 0 && deploymentBlock !== null && deploymentBlock > 0) {
+    console.log(`⚡ Optimization: Using deployment block ${deploymentBlock} instead of 0`);
+    fromBlock = deploymentBlock;
+  }
+  
   try {
     // Try full range first (works for paid tier or small ranges)
     console.log(`🔍 Attempting full range query: ${fromBlock} to ${toBlock}...`);
