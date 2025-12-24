@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
 import { IOCEncryption } from '../utils/encryption';
+import { smartQueryEvents } from '../utils/infura-helpers';
 
 export default function BatchBrowser() {
   const [batches, setBatches] = useState([]);
@@ -123,52 +124,16 @@ export default function BatchBrowser() {
       
       console.log(`Loading ${count} batches from ${network.name}...`);
       
-      // Fetch all batch events to get CIDs
+      // Fetch all batch events to get CIDs with smart chunked queries
       console.log(`🔍 Fetching events for CIDs from ${network.name}...`);
       const batchAddedFilter = registry.filters.BatchAdded();
       const batchZKFilter = registry.filters.BatchAddedWithZKProof();
       
-      let batchAddedEvents = [];
-      let batchZKEvents = [];
-      
-      // Try querying with Infura-safe fallback
-      try {
-        [batchAddedEvents, batchZKEvents] = await Promise.all([
-          registry.queryFilter(batchAddedFilter, 0, 'latest'),
-          registry.queryFilter(batchZKFilter, 0, 'latest')
-        ]);
-        console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name}`);
-      } catch (error) {
-        const errorStr = JSON.stringify(error);
-        const isBlockRangeError = 
-          error.message?.includes('block range') || 
-          error.message?.includes('10 block') ||
-          error.code === -32600 ||
-          errorStr.includes('"code":-32600') ||
-          errorStr.includes('block range');
-          
-        if (isBlockRangeError) {
-          console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
-          const latestBlock = await provider.getBlockNumber();
-          const fromBlock = Math.max(0, latestBlock - 1000);
-          
-          try {
-            [batchAddedEvents, batchZKEvents] = await Promise.all([
-              registry.queryFilter(batchAddedFilter, fromBlock, 'latest').catch(() => []),
-              registry.queryFilter(batchZKFilter, fromBlock, 'latest').catch(() => [])
-            ]);
-            console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from blocks ${fromBlock} to ${latestBlock}`);
-          } catch (fallbackError) {
-            console.error(`❌ Fallback query failed:`, fallbackError.message);
-            batchAddedEvents = [];
-            batchZKEvents = [];
-          }
-        } else {
-          console.error(`❌ Event query error:`, error.message);
-          batchAddedEvents = [];
-          batchZKEvents = [];
-        }
-      }
+      const [batchAddedEvents, batchZKEvents] = await Promise.all([
+        smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider),
+        smartQueryEvents(registry, batchZKFilter, 0, 'latest', provider)
+      ]);
+      console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name}`);
       
       // Combine and sort events by batch index
       const allEvents = [...batchAddedEvents, ...batchZKEvents];

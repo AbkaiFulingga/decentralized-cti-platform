@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS, STAKING_TIERS } from '../utils/constants';
+import { smartQueryEvents } from '../utils/infura-helpers';
 
 export default function ContributorDashboard() {
   const [walletConnected, setWalletConnected] = useState(false);
@@ -228,40 +229,10 @@ export default function ContributorDashboard() {
       const count = Number(countBigInt);
       console.log(`   Found ${count} total batches`);
       
-      // Fetch BatchAdded events to get CIDs
+      // Fetch BatchAdded events to get CIDs (using smart chunked queries)
       console.log('   🔎 Fetching BatchAdded events...');
       const filter = registry.filters.BatchAdded();
-      let events = [];
-      
-      try {
-        events = await registry.queryFilter(filter, 0, 'latest');
-      } catch (error) {
-        // Check for Infura block range errors (wrapped or direct)
-        const errorStr = JSON.stringify(error);
-        const isBlockRangeError = 
-          error.message?.includes('block range') || 
-          error.message?.includes('10 block') ||
-          error.code === -32600 ||
-          errorStr.includes('"code":-32600') ||
-          errorStr.includes('block range');
-          
-        if (isBlockRangeError) {
-          console.log(`   ⚠️  Block range limit detected, fetching recent blocks...`);
-          const latestBlock = await provider.getBlockNumber();
-          const fromBlock = Math.max(0, latestBlock - 1000);
-          console.log(`   📍 Fetching from block ${fromBlock} to ${latestBlock}`);
-          
-          try {
-            events = await registry.queryFilter(filter, fromBlock, 'latest');
-          } catch (fallbackError) {
-            console.error(`   ❌ Fallback query failed:`, fallbackError.message);
-            events = [];
-          }
-        } else {
-          console.error(`   ❌ Error fetching events:`, error.message);
-          events = [];
-        }
-      }
+      const events = await smartQueryEvents(registry, filter, 0, 'latest', provider);
       
       const cidMap = {};
       events.forEach(event => {

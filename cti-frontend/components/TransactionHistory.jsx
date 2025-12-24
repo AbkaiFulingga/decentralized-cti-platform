@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
+import { smartQueryEvents } from '../utils/infura-helpers';
 
 export default function TransactionHistory() {
   const [transactions, setTransactions] = useState([]);
@@ -73,26 +74,10 @@ export default function TransactionHistory() {
 
       const network = await provider.getNetwork();
       const chainId = network.chainId.toString();
+      setCurrentNetwork(chainId === "11155111" ? NETWORKS.sepolia : NETWORKS.arbitrumSepolia);
+
+      console.log(`📊 Fetching transaction history from BOTH networks for ${address.slice(0, 6)}...${address.slice(-4)}`);
       
-      let registryAddress;
-      if (chainId === "11155111") {
-        registryAddress = NETWORKS.sepolia.contracts.registry;
-        setCurrentNetwork(NETWORKS.sepolia);
-      } else if (chainId === "421614") {
-        registryAddress = NETWORKS.arbitrumSepolia.contracts.registry;
-        setCurrentNetwork(NETWORKS.arbitrumSepolia);
-      } else {
-        setError(`Unsupported network (Chain ID: ${chainId}). Please switch to Ethereum Sepolia or Arbitrum Sepolia.`);
-        setLoading(false);
-        return;
-      }
-
-      if (!registryAddress || registryAddress === "") {
-        setError(`⚠️ Contracts not yet deployed to ${chainId === "421614" ? "Arbitrum Sepolia" : "this network"}. Please switch to a supported network.`);
-        setLoading(false);
-        return;
-      }
-
       const registryABI = [
         "function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256)",
         "function getBatchCount() public view returns (uint256)",
@@ -100,113 +85,104 @@ export default function TransactionHistory() {
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
 
-      const registry = new ethers.Contract(registryAddress, registryABI, provider);
-      
-      // ✅ FIX: Check field [5] for isActive
-      const contributor = await registry.contributors(address);
-      const registered = contributor[5];
-      setIsRegistered(registered);
+      // Query BOTH networks simultaneously
+      const networksToQuery = [
+        { name: 'Sepolia', config: NETWORKS.sepolia },
+        { name: 'Arbitrum Sepolia', config: NETWORKS.arbitrumSepolia }
+      ];
 
-      if (!registered) {
-        setTransactions([]);
-        setLoading(false);
-        return;
-      }
+      let allUserTransactions = [];
 
-      const batchCount = await registry.getBatchCount();
-      
-      console.log(`📊 Fetching transaction history for ${address.slice(0, 6)}...${address.slice(-4)}`);
-      console.log(`📦 Total batches: ${batchCount}`);
-      
-      // Query events to get CIDs
-      const batchAddedFilter = registry.filters.BatchAdded();
-      let events = [];
-      
-      try {
-        events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
-        console.log(`✅ Fetched ${events.length} BatchAdded events`);
-      } catch (error) {
-        const errorStr = JSON.stringify(error);
-        const isBlockRangeError = 
-          error.message?.includes('block range') || 
-          error.message?.includes('10 block') ||
-          error.code === -32600 ||
-          errorStr.includes('"code":-32600') ||
-          errorStr.includes('block range');
+      for (const { name, config } of networksToQuery) {
+        try {
+          console.log(`� Querying ${name}...`);
+          const networkProvider = new ethers.JsonRpcProvider(config.rpcUrl);
+          const registry = new ethers.Contract(config.contracts.registry, registryABI, networkProvider);
           
-        if (isBlockRangeError) {
-          console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
-          const latestBlock = await provider.getBlockNumber();
-          const fromBlock = Math.max(0, latestBlock - 1000);
+          // Check if user is registered on this network
+          const contributor = await registry.contributors(address);
+          const registered = contributor[5];
           
-          try {
-            events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
-            console.log(`✅ Fetched ${events.length} events from blocks ${fromBlock} to ${latestBlock}`);
-          } catch (fallbackError) {
-            console.error(`❌ Fallback query failed:`, fallbackError.message);
-            events = [];
+          if (!registered) {
+            console.log(`⚠️ Not registered on ${name}, skipping`);
+            continue;
           }
-        } else {
-          console.error(`❌ Event query error:`, error.message);
-          events = [];
-        }
-      }
-      
-      const cidMap = {};
-      events.forEach(event => {
-        const batchIndex = Number(event.args.index);
-        cidMap[batchIndex] = event.args.cid;
-      });
-      
-      const userTransactions = [];
 
-      for (let i = 0; i < Number(batchCount); i++) {
-        const batch = await registry.getBatch(i);
-        const contributorHash = batch.contributorHash;
-        const isPublic = batch.isPublic;
-        
-        if (isPublic) {
-          const submitterAddress = '0x' + contributorHash.slice(26);
-          if (submitterAddress.toLowerCase() === address.toLowerCase()) {
+          const batchCount = await registry.getBatchCount();
+          console.log(`📦 ${name}: ${batchCount} total batches`);
+          
+          // Query events to get CIDs with smart chunked queries
+          const batchAddedFilter = registry.filters.BatchAdded();
+          const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', networkProvider);
+          console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events`);
+      
+          const cidMap = {};
+          events.forEach(event => {
+            const batchIndex = Number(event.args.index);
+            cidMap[batchIndex] = event.args.cid;
+          });
+      
+          // Filter batches submitted by this user
+          for (let i = 0; i < Number(batchCount); i++) {
+            const batch = await registry.getBatch(i);
+            const contributorHash = batch.contributorHash;
+            const isPublic = batch.isPublic;
             
-            let iocCount = '?';
-            const cid = cidMap[i];
-            
-            // Only fetch if we have a valid CID (not a hex string)
-            if (cid && !cid.startsWith('0x') && cid.length > 10) {
-              try {
-                const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
-                const result = await response.json();
-                if (result.success) {
-                  iocCount = result.data.iocs ? result.data.iocs.length : '?';
+            if (isPublic) {
+              const submitterAddress = '0x' + contributorHash.slice(26);
+              if (submitterAddress.toLowerCase() === address.toLowerCase()) {
+                
+                let iocCount = '?';
+                const cid = cidMap[i];
+                
+                // Only fetch if we have a valid CID (not a hex string)
+                if (cid && !cid.startsWith('0x') && cid.length > 10) {
+                  try {
+                    const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
+                    const result = await response.json();
+                    if (result.success) {
+                      iocCount = result.data.iocs ? result.data.iocs.length : '?';
+                    }
+                  } catch (err) {
+                    console.log(`⚠️ Could not fetch IOC count for batch ${i} on ${name}`);
+                  }
+                } else if (cid) {
+                  console.warn(`⚠️ Invalid CID format for batch ${i} on ${name}: ${cid.slice(0, 20)}...`);
                 }
-              } catch (err) {
-                console.log(`⚠️ Could not fetch IOC count for batch ${i}`);
-              }
-            } else if (cid) {
-              console.warn(`⚠️ Invalid CID format for batch ${i}: ${cid.slice(0, 20)}...`);
-            }
 
-            userTransactions.push({
-              batchIndex: i,
-              cid: cid || 'CID not found',
-              cidCommitment: batch.cidCommitment,
-              merkleRoot: batch.merkleRoot,
-              timestamp: new Date(Number(batch.timestamp) * 1000).toISOString(),
-              accepted: batch.accepted,
-              iocCount: iocCount,
-              confirmations: Number(batch.confirmations),
-              disputes: Number(batch.falsePositives)
-            });
-            
-            console.log(`✅ Found user batch #${i}: ${iocCount} IOCs, ${batch.accepted ? 'Accepted' : 'Pending'}`);
+                allUserTransactions.push({
+                  network: name,
+                  networkShort: name === 'Sepolia' ? 'ETH' : 'ARB',
+                  batchIndex: i,
+                  cid: cid || 'CID not found',
+                  cidCommitment: batch.cidCommitment,
+                  merkleRoot: batch.merkleRoot,
+                  timestamp: new Date(Number(batch.timestamp) * 1000).toISOString(),
+                  accepted: batch.accepted,
+                  iocCount: iocCount,
+                  confirmations: Number(batch.confirmations),
+                  disputes: Number(batch.falsePositives),
+                  explorerUrl: `${config.explorerUrl}/address/${config.contracts.registry}`
+                });
+                
+                console.log(`✅ Found user batch #${i} on ${name}: ${iocCount} IOCs, ${batch.accepted ? 'Accepted' : 'Pending'}`);
+              }
+            }
           }
+        } catch (networkError) {
+          console.error(`❌ Error querying ${name}:`, networkError.message);
+          // Continue to next network instead of failing completely
         }
       }
 
-      userTransactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      // Check if registered on at least one network
+      const registeredOnAny = allUserTransactions.length > 0;
+      setIsRegistered(registeredOnAny);
+
+      // Sort by timestamp (most recent first)
+      allUserTransactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
       
-      setTransactions(userTransactions);
+      setTransactions(allUserTransactions);
       setLoading(false);
       setError('');
 
@@ -308,16 +284,28 @@ export default function TransactionHistory() {
 
             {transactions.map((tx) => (
               <div
-                key={tx.batchIndex}
+                key={`${tx.network}-${tx.batchIndex}`}
                 className="bg-purple-950/50 rounded-xl p-6 border border-purple-700/50 hover:border-purple-600/70 transition-all"
               >
                 <div className="flex items-start justify-between mb-4">
                   <div>
-                    <h3 className="text-white font-bold text-lg mb-1">
-                      Batch #{tx.batchIndex}
-                    </h3>
+                    <div className="flex items-center gap-2 mb-2">
+                      <h3 className="text-white font-bold text-lg">
+                        Batch #{tx.batchIndex}
+                      </h3>
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${
+                        tx.networkShort === 'ETH' 
+                          ? 'bg-blue-900/50 text-blue-300 border border-blue-700/50' 
+                          : 'bg-orange-900/50 text-orange-300 border border-orange-700/50'
+                      }`}>
+                        {tx.networkShort}
+                      </span>
+                    </div>
                     <p className="text-gray-400 text-sm">
                       Submitted: {new Date(tx.timestamp).toLocaleString()}
+                    </p>
+                    <p className="text-gray-500 text-xs mt-1">
+                      Network: {tx.network}
                     </p>
                   </div>
                   

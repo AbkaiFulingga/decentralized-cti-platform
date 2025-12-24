@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
+import { smartQueryEvents } from '../utils/infura-helpers';
 
 export default function AnalyticsDashboard() {
   const [walletConnected, setWalletConnected] = useState(false);
@@ -249,40 +250,11 @@ export default function AnalyticsDashboard() {
         const count = Number(countBigInt);
         const recentCount = Math.min(count, 10);
         
-        // Query events to get CIDs with Infura-safe fallback
+        // Query events to get CIDs with smart chunked queries
         console.log(`📊 Fetching events for ${network.name}...`);
         const batchAddedFilter = registry.filters.BatchAdded();
-        let events = [];
-        
-        try {
-          events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
-          console.log(`✅ Fetched ${events.length} events from ${network.name}`);
-        } catch (error) {
-          const errorStr = JSON.stringify(error);
-          const isBlockRangeError = 
-            error.message?.includes('block range') || 
-            error.message?.includes('10 block') ||
-            error.code === -32600 ||
-            errorStr.includes('"code":-32600') ||
-            errorStr.includes('block range');
-            
-          if (isBlockRangeError) {
-            console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
-            const latestBlock = await provider.getBlockNumber();
-            const fromBlock = Math.max(0, latestBlock - 1000);
-            
-            try {
-              events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
-              console.log(`✅ Fetched ${events.length} events from blocks ${fromBlock} to ${latestBlock}`);
-            } catch (fallbackError) {
-              console.error(`❌ Fallback query failed:`, fallbackError.message);
-              events = [];
-            }
-          } else {
-            console.error(`❌ Event query error:`, error.message);
-            events = [];
-          }
-        }
+        const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider);
+        console.log(`✅ Fetched ${events.length} events from ${network.name}`);
         
         const cidMap = {};
         events.forEach(event => {

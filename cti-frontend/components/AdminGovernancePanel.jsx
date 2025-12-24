@@ -4,11 +4,13 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
+import { smartQueryEvents } from '../utils/infura-helpers';
 
 export default function AdminGovernancePanel() {
   const [pendingBatches, setPendingBatches] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
   const [currentNetwork, setCurrentNetwork] = useState(null);
@@ -186,38 +188,10 @@ export default function AdminGovernancePanel() {
       
       console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
       
-      // Query events to get CIDs
+      // Query events to get CIDs with smart chunked queries
       console.log('Fetching BatchAdded events...');
       const batchAddedFilter = registry.filters.BatchAdded();
-      let events = [];
-      
-      try {
-        events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
-      } catch (error) {
-        const errorStr = JSON.stringify(error);
-        const isBlockRangeError = 
-          error.message?.includes('block range') || 
-          error.message?.includes('10 block') ||
-          error.code === -32600 ||
-          errorStr.includes('"code":-32600') ||
-          errorStr.includes('block range');
-          
-        if (isBlockRangeError) {
-          console.log('Block range limit detected, fetching recent blocks...');
-          const latestBlock = await provider.getBlockNumber();
-          const fromBlock = Math.max(0, latestBlock - 1000);
-          
-          try {
-            events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
-          } catch (fallbackError) {
-            console.error('Fallback query failed:', fallbackError.message);
-            events = [];
-          }
-        } else {
-          console.error('Error fetching events:', error.message);
-          events = [];
-        }
-      }
+      const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider);
       
       const cidMap = {};
       events.forEach(event => {
@@ -314,6 +288,7 @@ export default function AdminGovernancePanel() {
   const approveBatch = async (batchId) => {
     try {
       setError('');
+      setSuccessMessage('');
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const governanceAddress = currentNetwork.contracts.governance;
@@ -328,9 +303,16 @@ export default function AdminGovernancePanel() {
       const tx = await governance.approveBatch(batchId, { gasLimit: 200000 });
       
       console.log("Approval tx:", tx.hash);
+      setSuccessMessage(`⏳ Approval transaction submitted: ${tx.hash.slice(0, 10)}... - waiting for confirmation`);
+      
       await tx.wait();
       
       console.log("✅ Batch approved!");
+      setSuccessMessage(`✅ Batch #${batchId} approved successfully on ${currentNetwork.name}!`);
+      
+      // Auto-clear success message after 5 seconds
+      setTimeout(() => setSuccessMessage(''), 5000);
+      
       await loadPendingBatches();
       
     } catch (error) {
@@ -447,6 +429,12 @@ export default function AdminGovernancePanel() {
             {error && (
               <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-300">
                 ❌ {error}
+              </div>
+            )}
+            
+            {successMessage && (
+              <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl text-green-300">
+                {successMessage}
               </div>
             )}
 
