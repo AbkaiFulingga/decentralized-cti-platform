@@ -138,7 +138,14 @@ export default function EnhancedIOCSearch() {
         try {
           // Fetch batch data with detailed logging
           console.log(`   📡 Calling getBatch(${i})...`);
-          const batch = await registry.getBatch(i);
+          let batch;
+          try {
+            batch = await registry.getBatch(i);
+          } catch (getBatchError) {
+            console.error(`   ❌ getBatch(${i}) decode error from ${network.name}:`, getBatchError.message);
+            // Skip this batch if we can't decode it - might be ABI mismatch
+            continue;
+          }
           
           console.log(`   ✅ Batch ${i} fetched:`, {
             cidCommitment: batch.cidCommitment,

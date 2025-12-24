@@ -28,9 +28,10 @@ async function main() {
     });
     console.log();
 
-    // Build Merkle tree
+    // Build Merkle tree - use keccak256 of the address directly (not as UTF-8 string)
+    // This matches OpenZeppelin's MerkleProof.verify expectations
     const leaves = contributors.map(addr => 
-        keccak256(ethers.toUtf8Bytes(addr.toLowerCase()))
+        keccak256(addr.toLowerCase())
     );
     
     const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
@@ -38,25 +39,36 @@ async function main() {
 
     console.log(`✅ Merkle Root: ${root}\n`);
 
-    // Generate proof data for each contributor
+    // Generate proof data for each contributor (for keccak256-based MerkleZKRegistry)
+    const proofs = contributors.map((addr, index) => {
+        const leaf = leaves[index];
+        const proof = tree.getProof(leaf);
+        
+        // Convert proof to hex array format
+        const hexProof = proof.map(p => '0x' + p.data.toString('hex'));
+
+        return {
+            leafIndex: index,
+            address: addr,
+            leaf: '0x' + leaf.toString('hex'),
+            proof: hexProof
+        };
+    });
+
+    // Save tree data in format compatible with both MerkleZKRegistry and frontend
     const treeData = {
         root: root,
-        leaves: contributors.map((addr, index) => {
-            const leaf = leaves[index];
-            const proof = tree.getProof(leaf);
-            
-            // Convert proof to format needed by circuit
-            const pathIndices = proof.map(p => p.position === 'right' ? 1 : 0);
-            const siblings = proof.map(p => BigInt('0x' + p.data.toString('hex')).toString());
-
-            return {
-                index,
-                address: addr,
-                leaf: leaf,
-                pathIndices,
-                siblings
-            };
-        })
+        contributorCount: contributors.length,
+        treeDepth: tree.getDepth(),
+        hashFunction: 'keccak256',
+        timestamp: new Date().toISOString(),
+        leaves: leaves.map(l => '0x' + l.toString('hex')),
+        contributors: contributors.map((addr, index) => ({
+            address: addr,
+            leafIndex: index,
+            isRealContributor: index === 0  // First one is real, others are dummy
+        })),
+        proofs: proofs
     };
 
     // Save to file
@@ -69,12 +81,13 @@ async function main() {
     
     // Print example proof for first contributor
     console.log("📊 Example proof (Contributor 0):");
-    console.log(`   Address: ${treeData.leaves[0].address}`);
-    console.log(`   Path indices: [${treeData.leaves[0].pathIndices}]`);
-    console.log(`   Siblings: ${treeData.leaves[0].siblings.length} nodes`);
+    console.log(`   Address: ${proofs[0].address}`);
+    console.log(`   Leaf: ${proofs[0].leaf}`);
+    console.log(`   Proof elements: ${proofs[0].proof.length} hashes`);
     console.log();
 
-    console.log("✅ Done! Use this tree for zkSNARK proof generation.");
+    console.log("✅ Done! Use this tree for Merkle proof verification.");
+    console.log("   Hash function: keccak256 (compatible with OpenZeppelin MerkleProof)");
 }
 
 main()

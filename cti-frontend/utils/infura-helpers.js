@@ -11,6 +11,7 @@
  */
 export async function queryEventsInChunks(contract, filter, startBlock, endBlock, provider) {
   const CHUNK_SIZE = 10; // Infura free tier limit
+  const RATE_LIMIT_DELAY = 300; // 300ms delay between chunks (was 100ms)
   const events = [];
   
   // Get latest block if endBlock is 'latest'
@@ -20,7 +21,7 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
   
   let currentStart = startBlock;
   let retries = 0;
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 5; // Increased from 3
   
   while (currentStart <= latestBlock) {
     const currentEnd = Math.min(currentStart + CHUNK_SIZE - 1, latestBlock);
@@ -36,11 +37,23 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
       currentStart = currentEnd + 1;
       retries = 0; // Reset retries on success
       
-      // Rate limiting - wait 100ms between chunks to avoid hitting rate limits
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Rate limiting - wait 300ms between chunks to avoid Alchemy compute unit limits
+      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
       
     } catch (error) {
-      console.error(`   ❌ Error querying blocks ${currentStart}-${currentEnd}:`, error.message);
+      const errorStr = JSON.stringify(error);
+      const isRateLimitError = 
+        error.code === 429 || 
+        errorStr.includes('"code":429') ||
+        errorStr.includes('compute units') ||
+        errorStr.includes('rate limit');
+      
+      if (isRateLimitError) {
+        console.warn(`   ⏳ Rate limit hit on blocks ${currentStart}-${currentEnd}, waiting longer...`);
+        await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1))); // Wait 2-10 seconds
+      } else {
+        console.error(`   ❌ Error querying blocks ${currentStart}-${currentEnd}:`, error.message);
+      }
       
       retries++;
       if (retries >= MAX_RETRIES) {

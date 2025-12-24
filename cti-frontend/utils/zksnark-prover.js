@@ -102,7 +102,7 @@ export class ZKSnarkProver {
     // We can't verify with keccak256. Instead, check if address exists in contributors array
     if (this.contributorTree.contributors && Array.isArray(this.contributorTree.contributors)) {
       return this.contributorTree.contributors.some(
-        c => c.address.toLowerCase() === addressLower
+        c => c && c.address && c.address.toLowerCase() === addressLower
       );
     }
     
