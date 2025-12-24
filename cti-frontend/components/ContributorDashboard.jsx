@@ -212,7 +212,8 @@ export default function ContributorDashboard() {
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
       
       const registry = new ethers.Contract(
@@ -221,8 +222,53 @@ export default function ContributorDashboard() {
         signer
       );
       
+      console.log('📊 Loading submission history...');
+      
       const countBigInt = await registry.getBatchCount();
       const count = Number(countBigInt);
+      console.log(`   Found ${count} total batches`);
+      
+      // Fetch BatchAdded events to get CIDs
+      console.log('   🔎 Fetching BatchAdded events...');
+      const filter = registry.filters.BatchAdded();
+      let events = [];
+      
+      try {
+        events = await registry.queryFilter(filter, 0, 'latest');
+      } catch (error) {
+        // Check for Infura block range errors (wrapped or direct)
+        const errorStr = JSON.stringify(error);
+        const isBlockRangeError = 
+          error.message?.includes('block range') || 
+          error.message?.includes('10 block') ||
+          error.code === -32600 ||
+          errorStr.includes('"code":-32600') ||
+          errorStr.includes('block range');
+          
+        if (isBlockRangeError) {
+          console.log(`   ⚠️  Block range limit detected, fetching recent blocks...`);
+          const latestBlock = await provider.getBlockNumber();
+          const fromBlock = Math.max(0, latestBlock - 1000);
+          console.log(`   📍 Fetching from block ${fromBlock} to ${latestBlock}`);
+          
+          try {
+            events = await registry.queryFilter(filter, fromBlock, 'latest');
+          } catch (fallbackError) {
+            console.error(`   ❌ Fallback query failed:`, fallbackError.message);
+            events = [];
+          }
+        } else {
+          console.error(`   ❌ Error fetching events:`, error.message);
+          events = [];
+        }
+      }
+      
+      const cidMap = {};
+      events.forEach(event => {
+        cidMap[Number(event.args.index)] = event.args.cid;
+      });
+      console.log(`   ✅ Retrieved ${events.length} events`);
+      
       const history = [];
       
       const addressHash = ethers.keccak256(ethers.toUtf8Bytes(address.toLowerCase()));
@@ -230,30 +276,43 @@ export default function ContributorDashboard() {
       for (let i = 0; i < count; i++) {
         try {
           const batch = await registry.getBatch(i);
+          const cid = cidMap[i];
           
-          if (batch[4] === addressHash || batch[5]) {
+          if (!cid) {
+            console.warn(`   ⚠️  No CID found for batch ${i}`);
+            continue;
+          }
+          
+          // Validate CID format
+          if (cid.startsWith('0x') || cid.length < 10) {
+            console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${cid}`);
+            continue;
+          }
+          
+          // Check if this batch belongs to the current user
+          if (batch.contributorHash === addressHash || batch.isPublic) {
             await new Promise(resolve => setTimeout(resolve, 300));
             
-            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+            const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
             const result = await response.json();
             
             if (result.success) {
               history.push({
                 batchId: i,
-                cid: batch[0],
-                merkleRoot: batch[1],
-                timestamp: Number(batch[2]),
-                timestampFormatted: new Date(Number(batch[2]) * 1000).toLocaleString(),
-                approved: batch[3],
-                isPublic: batch[5],
-                confirmations: Number(batch[6]),
-                disputes: Number(batch[7]),
+                cid: cid,
+                merkleRoot: batch.merkleRoot,
+                timestamp: Number(batch.timestamp),
+                timestampFormatted: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
+                approved: batch.accepted,
+                isPublic: batch.isPublic,
+                confirmations: Number(batch.confirmations),
+                disputes: Number(batch.falsePositives),
                 iocCount: result.data.iocs.length
               });
             }
           }
         } catch (error) {
-          console.error(`Error loading batch ${i}:`, error.message);
+          console.error(`   ❌ Error loading batch ${i}:`, error.message);
         }
       }
       
@@ -261,7 +320,7 @@ export default function ContributorDashboard() {
       console.log(`✅ Loaded ${history.length} submissions`);
       
     } catch (error) {
-      console.error('Error loading submission history:', error);
+      console.error('❌ Error loading submission history:', error);
     }
   };
 

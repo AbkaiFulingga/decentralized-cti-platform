@@ -177,8 +177,7 @@ export default function AdminGovernancePanel() {
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
-        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
+        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
       ];
       
       const registry = new ethers.Contract(registryAddress, registryABI, signer);
@@ -186,110 +185,47 @@ export default function AdminGovernancePanel() {
       
       console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
       
-      // Query events to get CIDs
-      console.log('Fetching BatchAdded events...');
-      const batchAddedFilter = registry.filters.BatchAdded();
-      let events = [];
-      
-      try {
-        events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
-      } catch (error) {
-        const errorStr = JSON.stringify(error);
-        const isBlockRangeError = 
-          error.message?.includes('block range') || 
-          error.message?.includes('10 block') ||
-          error.code === -32600 ||
-          errorStr.includes('"code":-32600') ||
-          errorStr.includes('block range');
-          
-        if (isBlockRangeError) {
-          console.log('Block range limit detected, fetching recent blocks...');
-          const latestBlock = await provider.getBlockNumber();
-          const fromBlock = Math.max(0, latestBlock - 1000);
-          
-          try {
-            events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
-          } catch (fallbackError) {
-            console.error('Fallback query failed:', fallbackError.message);
-            events = [];
-          }
-        } else {
-          console.error('Error fetching events:', error.message);
-          events = [];
-        }
-      }
-      
-      const cidMap = {};
-      events.forEach(event => {
-        cidMap[Number(event.args.index)] = event.args.cid;
-      });
-      console.log(`Retrieved ${events.length} events`);
-      
       const pending = [];
       
       for (let i = 0; i < count; i++) {
         try {
           const batch = await registry.getBatch(i);
           
-          if (!batch.accepted) {
+          if (!batch[3]) {
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            const cid = cidMap[i];
+            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+            const result = await response.json();
             
-            // Only fetch if we have a valid CID
-            if (cid && !cid.startsWith('0x') && cid.length > 10) {
-              const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
-              const result = await response.json();
-              
-              if (result.success) {
-                pending.push({
-                  id: i,
-                  cid: cid,
-                  cidCommitment: batch.cidCommitment,
-                  merkleRoot: batch.merkleRoot,
-                  timestamp: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
-                  approved: batch.accepted,
-                  contributorHash: batch.contributorHash,
-                  isPublic: batch.isPublic,
-                  voteCount: Number(batch.confirmations),
-                  falsePositives: Number(batch.falsePositives),
-                  iocCount: result.data.iocs.length,
-                  iocData: result.data,
-                  gateway: result.gateway
-                });
-              } else {
-                pending.push({
-                  id: i,
-                  cid: cid,
-                  cidCommitment: batch.cidCommitment,
-                  merkleRoot: batch.merkleRoot,
-                  timestamp: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
-                  approved: batch.accepted,
-                  contributorHash: batch.contributorHash,
-                  isPublic: batch.isPublic,
-                  voteCount: Number(batch.confirmations),
-                  falsePositives: Number(batch.falsePositives),
-                  iocCount: 0,
-                  iocData: null,
-                  error: 'IPFS data unavailable'
-                });
-              }
-            } else {
-              console.warn(`Invalid or missing CID for batch ${i}`);
+            if (result.success) {
               pending.push({
                 id: i,
-                cid: 'Invalid CID',
-                cidCommitment: batch.cidCommitment,
-                merkleRoot: batch.merkleRoot,
-                timestamp: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
-                approved: batch.accepted,
-                contributorHash: batch.contributorHash,
-                isPublic: batch.isPublic,
-                voteCount: Number(batch.confirmations),
-                falsePositives: Number(batch.falsePositives),
+                cid: batch[0],
+                merkleRoot: batch[1],
+                timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
+                approved: batch[3],
+                contributorHash: batch[4],
+                isPublic: batch[5],
+                voteCount: Number(batch[6]),
+                falsePositives: Number(batch[7]),
+                iocCount: result.data.iocs.length,
+                iocData: result.data,
+                gateway: result.gateway
+              });
+            } else {
+              pending.push({
+                id: i,
+                cid: batch[0],
+                merkleRoot: batch[1],
+                timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
+                approved: batch[3],
+                contributorHash: batch[4],
+                isPublic: batch[5],
+                voteCount: Number(batch[6]),
+                falsePositives: Number(batch[7]),
                 iocCount: 0,
                 iocData: null,
-                error: 'No valid CID found'
+                error: 'IPFS data unavailable'
               });
             }
             

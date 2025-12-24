@@ -90,56 +90,167 @@ export default function EnhancedIOCSearch() {
 
   const indexBatchesFromNetwork = async (network) => {
     try {
+      console.log(`🔍 [${network.name}] Starting batch indexing...`);
+      console.log(`   📡 RPC: ${network.rpcUrl}`);
+      console.log(`   📝 Registry: ${network.contracts.registry}`);
+      
       const provider = new ethers.JsonRpcProvider(network.rpcUrl);
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
       
       const registry = new ethers.Contract(network.contracts.registry, registryABI, provider);
       const count = await registry.getBatchCount();
+      const countNum = Number(count);
       
-      console.log(`Indexing ${count} batches from ${network.name}...`);
+      console.log(`📊 [${network.name}] Found ${countNum} batches`);
+      
+      if (countNum === 0) {
+        console.log(`⚠️  [${network.name}] No batches to index`);
+        return [];
+      }
+      
+      // Fetch all BatchAdded events to get actual CIDs
+      console.log(`🔎 [${network.name}] Fetching BatchAdded events...`);
+      const filter = registry.filters.BatchAdded();
+      
+      // For free tier RPC providers (like Infura free), query in chunks
+      let events = [];
+      try {
+        // Try fetching all at once first (works for paid tiers or local nodes)
+        events = await registry.queryFilter(filter, 0, 'latest');
+      } catch (error) {
+        // Check for Infura block range errors (wrapped or direct)
+        const errorStr = JSON.stringify(error);
+        const isBlockRangeError = 
+          error.message?.includes('block range') || 
+          error.message?.includes('10 block') ||
+          error.code === -32600 ||
+          errorStr.includes('"code":-32600') ||
+          errorStr.includes('block range');
+          
+        if (isBlockRangeError) {
+          console.log(`   ⚠️  Block range limit detected, fetching in chunks...`);
+          // Fallback: Use recent blocks only (last 1000 blocks)
+          const latestBlock = await provider.getBlockNumber();
+          const fromBlock = Math.max(0, latestBlock - 1000);
+          console.log(`   📍 Fetching from block ${fromBlock} to ${latestBlock}`);
+          
+          try {
+            events = await registry.queryFilter(filter, fromBlock, 'latest');
+          } catch (fallbackError) {
+            console.error(`   ❌ Fallback query also failed:`, fallbackError.message);
+            events = [];
+          }
+        } else {
+          console.error(`   ❌ Error fetching events:`, error.message);
+          events = [];
+        }
+      }
+      
+      console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
+      
+      const cidMap = {};
+      events.forEach(event => {
+        const batchIndex = Number(event.args.index);
+        const cid = event.args.cid;
+        cidMap[batchIndex] = cid;
+        console.log(`   📦 Batch ${batchIndex}: ${cid}`);
+      });
       
       const indexed = [];
       
-      for (let i = 0; i < count; i++) {
-        setIndexProgress({ current: i + 1, total: Number(count), network: network.name });
+      for (let i = 0; i < countNum; i++) {
+        setIndexProgress({ current: i + 1, total: countNum, network: network.name });
+        
+        console.log(`\n🔄 [${network.name}] Processing batch ${i}/${countNum - 1}...`);
         
         try {
+          // Fetch batch data with detailed logging
+          console.log(`   📡 Calling getBatch(${i})...`);
           const batch = await registry.getBatch(i);
+          
+          console.log(`   ✅ Batch ${i} fetched:`, {
+            cidCommitment: batch.cidCommitment,
+            merkleRoot: batch.merkleRoot,
+            timestamp: Number(batch.timestamp),
+            accepted: batch.accepted,
+            contributorHash: batch.contributorHash,
+            isPublic: batch.isPublic,
+            confirmations: Number(batch.confirmations),
+            falsePositives: Number(batch.falsePositives)
+          });
+          
+          const cid = cidMap[i];
+          
+          if (!cid) {
+            console.warn(`   ⚠️  No CID found in events for batch ${i}, skipping`);
+            continue;
+          }
+          
+          // Validate CID format (should start with 'Qm' or 'bafy' for IPFS, not '0x')
+          if (cid.startsWith('0x') || cid === '0x0000000000000000000000000000000000000000000000000000000000000100') {
+            console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${cid.slice(0, 20)}... (looks like a hash, not an IPFS CID)`);
+            continue;
+          }
+          
+          console.log(`   📍 CID from events: ${cid}`);
           
           await new Promise(resolve => setTimeout(resolve, 300));
           
-          const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+          console.log(`   🌐 Fetching IOC data from IPFS...`);
+          const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
           const result = await response.json();
           
-          if (result.success && result.data.iocs) {
-            indexed.push({
-              batchId: i,
-              network: network.name,
-              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
-              chainId: network.chainId,
-              cid: batch[0],
-              merkleRoot: batch[1],
-              timestamp: Number(batch[2]),
-              approved: batch[3],
-              contributorHash: batch[4],
-              isPublic: batch[5],
-              confirmations: Number(batch[6]),
-              disputes: Number(batch[7]),
-              iocs: result.data.iocs,
-              format: result.data.format,
-              explorerUrl: network.explorerUrl,
-              registryAddress: network.contracts.registry,
-              governanceAddress: network.contracts.governance
-            });
+          if (!result.success) {
+            console.error(`   ❌ IPFS fetch failed:`, result.error);
+            continue;
           }
           
-          console.log(`✅ Indexed batch ${i} from ${network.name}`);
+          if (!result.data || !result.data.iocs) {
+            console.warn(`   ⚠️  No IOCs found in IPFS data`);
+            continue;
+          }
+          
+          console.log(`   ✅ Retrieved ${result.data.iocs.length} IOCs`);
+          
+          const indexedBatch = {
+            batchId: i,
+            network: network.name,
+            networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+            chainId: network.chainId,
+            cid: cid,
+            merkleRoot: batch.merkleRoot,
+            timestamp: Number(batch.timestamp),
+            approved: batch.accepted,
+            contributorHash: batch.contributorHash,
+            isPublic: batch.isPublic,
+            confirmations: Number(batch.confirmations),
+            disputes: Number(batch.falsePositives),
+            iocs: result.data.iocs,
+            format: result.data.format,
+            explorerUrl: network.explorerUrl,
+            registryAddress: network.contracts.registry,
+            governanceAddress: network.contracts.governance
+          };
+          
+          indexed.push(indexedBatch);
+          console.log(`   ✅ Batch ${i} indexed successfully`);
+          
         } catch (error) {
-          console.error(`Failed to index batch ${i} from ${network.name}:`, error.message);
+          console.error(`   ❌ Failed to index batch ${i}:`, {
+            error: error.message,
+            code: error.code,
+            stack: error.stack
+          });
+          
+          // Try to decode the error for more details
+          if (error.data) {
+            console.error(`   📊 Error data:`, error.data);
+          }
         }
       }
       
@@ -151,21 +262,44 @@ export default function EnhancedIOCSearch() {
   };
 
   const indexAllBatches = async () => {
+    console.log('\n═══════════════════════════════════════════════════════');
+    console.log('🚀 Starting Multi-Chain IOC Indexing');
+    console.log('═══════════════════════════════════════════════════════\n');
+    
     setIndexing(true);
     setIndexProgress({ current: 0, total: 0, network: 'Starting...' });
     
     try {
+      console.log('📡 Indexing from 2 networks in parallel:');
+      console.log('   1. Sepolia (Ethereum L1)');
+      console.log('   2. Arbitrum Sepolia (L2)');
+      console.log('');
+      
+      const startTime = Date.now();
+      
       const [l1Batches, l2Batches] = await Promise.all([
         indexBatchesFromNetwork(NETWORKS.sepolia),
         indexBatchesFromNetwork(NETWORKS.arbitrumSepolia)
       ]);
       
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      
+      console.log('\n═══════════════════════════════════════════════════════');
+      console.log('📊 Indexing Complete - Summary');
+      console.log('═══════════════════════════════════════════════════════');
+      console.log(`   🌐 Sepolia batches: ${l1Batches.length}`);
+      console.log(`   ⚡ Arbitrum batches: ${l2Batches.length}`);
+      console.log(`   📦 Total indexed: ${l1Batches.length + l2Batches.length}`);
+      console.log(`   ⏱️  Time taken: ${elapsedTime}s`);
+      console.log('═══════════════════════════════════════════════════════\n');
+      
       const combined = [...l1Batches, ...l2Batches];
       setAllBatches(combined);
       
-      console.log(`✅ Indexed ${combined.length} total batches`);
+      console.log(`✅ All batches stored in state`);
     } catch (error) {
-      console.error('Indexing error:', error);
+      console.error('❌ Fatal indexing error:', error);
+      console.error('   Stack:', error.stack);
     } finally {
       setIndexing(false);
       setIndexProgress({ current: 0, total: 0, network: '' });

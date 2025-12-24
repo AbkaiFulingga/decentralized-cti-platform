@@ -96,7 +96,7 @@ export default function AnalyticsDashboard() {
       const registryABI = [
         "function getPlatformStats() external view returns (uint256 totalBatches, uint256 totalAccepted, uint256 publicBatches, uint256 anonymousBatches, uint256 totalPublicContrib, uint256 totalAnonContrib, uint256 totalStaked)",
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
       ];
       
       const registry = new ethers.Contract(
@@ -169,7 +169,7 @@ export default function AnalyticsDashboard() {
         
         const registryABI = [
           "function getBatchCount() public view returns (uint256)",
-          "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+          "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
         ];
         
         const registry = new ethers.Contract(
@@ -235,8 +235,7 @@ export default function AnalyticsDashboard() {
         
         const registryABI = [
           "function getBatchCount() public view returns (uint256)",
-          "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
-          "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
+          "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
         ];
         
         const registry = new ethers.Contract(
@@ -249,80 +248,23 @@ export default function AnalyticsDashboard() {
         const count = Number(countBigInt);
         const recentCount = Math.min(count, 10);
         
-        // Query events to get CIDs with Infura-safe fallback
-        console.log(`📊 Fetching events for ${network.name}...`);
-        const batchAddedFilter = registry.filters.BatchAdded();
-        let events = [];
-        
-        try {
-          events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
-          console.log(`✅ Fetched ${events.length} events from ${network.name}`);
-        } catch (error) {
-          const errorStr = JSON.stringify(error);
-          const isBlockRangeError = 
-            error.message?.includes('block range') || 
-            error.message?.includes('10 block') ||
-            error.code === -32600 ||
-            errorStr.includes('"code":-32600') ||
-            errorStr.includes('block range');
-            
-          if (isBlockRangeError) {
-            console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
-            const latestBlock = await provider.getBlockNumber();
-            const fromBlock = Math.max(0, latestBlock - 1000);
-            
-            try {
-              events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
-              console.log(`✅ Fetched ${events.length} events from blocks ${fromBlock} to ${latestBlock}`);
-            } catch (fallbackError) {
-              console.error(`❌ Fallback query failed:`, fallbackError.message);
-              events = [];
-            }
-          } else {
-            console.error(`❌ Event query error:`, error.message);
-            events = [];
-          }
-        }
-        
-        const cidMap = {};
-        events.forEach(event => {
-          const batchIndex = Number(event.args.index);
-          cidMap[batchIndex] = event.args.cid;
-        });
-        
         for (let i = count - 1; i >= count - recentCount && i >= 0; i--) {
           try {
             const batch = await registry.getBatch(i);
             
             await new Promise(resolve => setTimeout(resolve, 200));
             
-            const cid = cidMap[i];
-            let iocCount = 0;
-            
-            // Only fetch from IPFS if we have a valid CID
-            if (cid && !cid.startsWith('0x')) {
-              try {
-                const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
-                const result = await response.json();
-                
-                if (result.success && result.data.iocs) {
-                  iocCount = result.data.iocs.length;
-                }
-              } catch (error) {
-                console.log(`⚠️ Could not fetch IOC count for batch ${i}:`, error.message);
-              }
-            } else {
-              console.log(`⚠️ No valid CID found for batch ${i} (cidCommitment: ${batch.cidCommitment.slice(0, 10)}...)`);
-            }
+            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+            const result = await response.json();
             
             activity.push({
               batchId: i,
               network: network.name,
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
-              timestamp: Number(batch.timestamp),
-              approved: batch.accepted,
-              iocCount: iocCount,
-              confirmations: Number(batch.confirmations)
+              timestamp: Number(batch[2]),
+              approved: batch[3],
+              iocCount: result.success ? result.data.iocs.length : 0,
+              confirmations: Number(batch[6])
             });
           } catch (error) {
             console.error(`Error loading batch ${i}:`, error.message);
@@ -354,7 +296,7 @@ export default function AnalyticsDashboard() {
         
         const registryABI = [
           "function getBatchCount() public view returns (uint256)",
-          "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+          "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
         ];
         
         const registry = new ethers.Contract(

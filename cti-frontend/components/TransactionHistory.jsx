@@ -96,7 +96,8 @@ export default function TransactionHistory() {
       const registryABI = [
         "function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256)",
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256) public view returns (string, bytes32, uint256, bool, bytes32, bool, uint256, uint256)"
+        "function getBatch(uint256) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
 
       const registry = new ethers.Contract(registryAddress, registryABI, provider);
@@ -113,36 +114,92 @@ export default function TransactionHistory() {
       }
 
       const batchCount = await registry.getBatchCount();
+      
+      console.log(`📊 Fetching transaction history for ${address.slice(0, 6)}...${address.slice(-4)}`);
+      console.log(`📦 Total batches: ${batchCount}`);
+      
+      // Query events to get CIDs
+      const batchAddedFilter = registry.filters.BatchAdded();
+      let events = [];
+      
+      try {
+        events = await registry.queryFilter(batchAddedFilter, 0, 'latest');
+        console.log(`✅ Fetched ${events.length} BatchAdded events`);
+      } catch (error) {
+        const errorStr = JSON.stringify(error);
+        const isBlockRangeError = 
+          error.message?.includes('block range') || 
+          error.message?.includes('10 block') ||
+          error.code === -32600 ||
+          errorStr.includes('"code":-32600') ||
+          errorStr.includes('block range');
+          
+        if (isBlockRangeError) {
+          console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
+          const latestBlock = await provider.getBlockNumber();
+          const fromBlock = Math.max(0, latestBlock - 1000);
+          
+          try {
+            events = await registry.queryFilter(batchAddedFilter, fromBlock, 'latest');
+            console.log(`✅ Fetched ${events.length} events from blocks ${fromBlock} to ${latestBlock}`);
+          } catch (fallbackError) {
+            console.error(`❌ Fallback query failed:`, fallbackError.message);
+            events = [];
+          }
+        } else {
+          console.error(`❌ Event query error:`, error.message);
+          events = [];
+        }
+      }
+      
+      const cidMap = {};
+      events.forEach(event => {
+        const batchIndex = Number(event.args.index);
+        cidMap[batchIndex] = event.args.cid;
+      });
+      
       const userTransactions = [];
 
       for (let i = 0; i < Number(batchCount); i++) {
         const batch = await registry.getBatch(i);
-        const contributorHash = batch[4];
-        const isPublic = batch[5];
+        const contributorHash = batch.contributorHash;
+        const isPublic = batch.isPublic;
         
         if (isPublic) {
           const submitterAddress = '0x' + contributorHash.slice(26);
           if (submitterAddress.toLowerCase() === address.toLowerCase()) {
             
             let iocCount = '?';
-            try {
-              const response = await fetch(`https://gateway.pinata.cloud/ipfs/${batch[0]}`);
-              const iocData = await response.json();
-              iocCount = iocData.iocs ? iocData.iocs.length : '?';
-            } catch (err) {
-              console.log(`Could not fetch IOC count for batch ${i}`);
+            const cid = cidMap[i];
+            
+            // Only fetch if we have a valid CID (not a hex string)
+            if (cid && !cid.startsWith('0x') && cid.length > 10) {
+              try {
+                const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
+                const result = await response.json();
+                if (result.success) {
+                  iocCount = result.data.iocs ? result.data.iocs.length : '?';
+                }
+              } catch (err) {
+                console.log(`⚠️ Could not fetch IOC count for batch ${i}`);
+              }
+            } else if (cid) {
+              console.warn(`⚠️ Invalid CID format for batch ${i}: ${cid.slice(0, 20)}...`);
             }
 
             userTransactions.push({
               batchIndex: i,
-              cid: batch[0],
-              merkleRoot: batch[1],
-              timestamp: new Date(Number(batch[2]) * 1000).toISOString(),
-              accepted: batch[3],
+              cid: cid || 'CID not found',
+              cidCommitment: batch.cidCommitment,
+              merkleRoot: batch.merkleRoot,
+              timestamp: new Date(Number(batch.timestamp) * 1000).toISOString(),
+              accepted: batch.accepted,
               iocCount: iocCount,
-              confirmations: Number(batch[6]),
-              disputes: Number(batch[7])
+              confirmations: Number(batch.confirmations),
+              disputes: Number(batch.falsePositives)
             });
+            
+            console.log(`✅ Found user batch #${i}: ${iocCount} IOCs, ${batch.accepted ? 'Accepted' : 'Pending'}`);
           }
         }
       }

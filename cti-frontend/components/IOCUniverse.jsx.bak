@@ -404,7 +404,7 @@ export default function IOCUniverse() {
         
         const registryABI = [
           "function getBatchCount() public view returns (uint256)",
-          "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+          "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
         ];
         
         const registry = new ethers.Contract(

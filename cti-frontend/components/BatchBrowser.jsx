@@ -124,29 +124,62 @@ export default function BatchBrowser() {
       console.log(`Loading ${count} batches from ${network.name}...`);
       
       // Fetch all batch events to get CIDs
-      console.log(`Fetching events for CIDs from ${network.name}...`);
+      console.log(`🔍 Fetching events for CIDs from ${network.name}...`);
       const batchAddedFilter = registry.filters.BatchAdded();
       const batchZKFilter = registry.filters.BatchAddedWithZKProof();
       
-      const [batchAddedEvents, batchZKEvents] = await Promise.all([
-        registry.queryFilter(batchAddedFilter, 0, 'latest').catch(() => []),
-        registry.queryFilter(batchZKFilter, 0, 'latest').catch(() => [])
-      ]);
+      let batchAddedEvents = [];
+      let batchZKEvents = [];
+      
+      // Try querying with Infura-safe fallback
+      try {
+        [batchAddedEvents, batchZKEvents] = await Promise.all([
+          registry.queryFilter(batchAddedFilter, 0, 'latest'),
+          registry.queryFilter(batchZKFilter, 0, 'latest')
+        ]);
+        console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name}`);
+      } catch (error) {
+        const errorStr = JSON.stringify(error);
+        const isBlockRangeError = 
+          error.message?.includes('block range') || 
+          error.message?.includes('10 block') ||
+          error.code === -32600 ||
+          errorStr.includes('"code":-32600') ||
+          errorStr.includes('block range');
+          
+        if (isBlockRangeError) {
+          console.log(`⚠️ Infura limit reached, fetching recent blocks only...`);
+          const latestBlock = await provider.getBlockNumber();
+          const fromBlock = Math.max(0, latestBlock - 1000);
+          
+          try {
+            [batchAddedEvents, batchZKEvents] = await Promise.all([
+              registry.queryFilter(batchAddedFilter, fromBlock, 'latest').catch(() => []),
+              registry.queryFilter(batchZKFilter, fromBlock, 'latest').catch(() => [])
+            ]);
+            console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from blocks ${fromBlock} to ${latestBlock}`);
+          } catch (fallbackError) {
+            console.error(`❌ Fallback query failed:`, fallbackError.message);
+            batchAddedEvents = [];
+            batchZKEvents = [];
+          }
+        } else {
+          console.error(`❌ Event query error:`, error.message);
+          batchAddedEvents = [];
+          batchZKEvents = [];
+        }
+      }
       
       // Combine and sort events by batch index
       const allEvents = [...batchAddedEvents, ...batchZKEvents];
       const cidMap = {};
       allEvents.forEach((event, idx) => {
-        console.log(`Event ${idx}:`, {
-          index: event.args.index,
-          cid: event.args.cid,
-          allArgs: event.args
-        });
         const batchIndex = Number(event.args.index);
         cidMap[batchIndex] = event.args.cid;
+        console.log(`📦 Event ${idx}: Batch #${batchIndex} → CID: ${event.args.cid}`);
       });
       
-      console.log(`Found ${Object.keys(cidMap).length} CIDs from events`, cidMap);
+      console.log(`✅ Found ${Object.keys(cidMap).length} CIDs from events for ${network.name}`, cidMap);
       
       const batchesData = [];
       
@@ -156,36 +189,38 @@ export default function BatchBrowser() {
           
           await new Promise(resolve => setTimeout(resolve, 500));
           
-          // Get CID from event map (convert to string key)
-          const cid = cidMap[i.toString()];
+          // Get CID from event map
+          const cid = cidMap[i];
           
           if (!cid) {
-            console.warn(`No CID found for batch ${i} from events`);
+            console.warn(`⚠️ No CID found for batch ${i} from events`);
             batchesData.push({
               id: i,
               network: network.name,
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
               chainId: network.chainId,
-              cidCommitment: batch[0],
-              merkleRoot: batch[1],
-              timestamp: new Date(Number(batch[2]) * 1000).toLocaleString(),
-              timestampRaw: Number(batch[2]),
-              approved: batch[3],
-              contributorHash: batch[4],
-              isPublic: batch[5],
-              voteCount: Number(batch[6]),
-              falsePositives: Number(batch[7]),
-              error: 'CID not found in events',
+              cidCommitment: batch.cidCommitment,
+              merkleRoot: batch.merkleRoot,
+              timestamp: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
+              timestampRaw: Number(batch.timestamp),
+              approved: batch.accepted,
+              contributorHash: batch.contributorHash,
+              isPublic: batch.isPublic,
+              voteCount: Number(batch.confirmations),
+              falsePositives: Number(batch.falsePositives),
+              error: 'CID not found in events - batch may be from before recent blocks',
               explorerUrl: network.explorerUrl,
               registryAddress: registryAddress
             });
             continue;
           }
           
+          console.log(`📥 Fetching IOC data for batch ${i} from IPFS: ${cid}`);
+          
           const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
           const result = await response.json();
           
-          const timestampRaw = Number(batch[2]);
+          const timestampRaw = Number(batch.timestamp);
           
           if (result.success) {
             // Check if data is encrypted
@@ -226,15 +261,15 @@ export default function BatchBrowser() {
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
               chainId: network.chainId,
               cid: cid,                         // string cid from events
-              cidCommitment: batch[0],          // bytes32 cidCommitment
-              merkleRoot: batch[1],             // bytes32 merkleRoot
+              cidCommitment: batch.cidCommitment,          // bytes32 cidCommitment
+              merkleRoot: batch.merkleRoot,             // bytes32 merkleRoot
               timestamp: new Date(timestampRaw * 1000).toLocaleString(),
               timestampRaw: timestampRaw,       // uint256 timestamp
-              approved: batch[3],               // bool accepted
-              contributorHash: batch[4],        // bytes32 contributorHash
-              isPublic: batch[5],               // bool isPublic
-              voteCount: Number(batch[6]),      // uint256 confirmations
-              falsePositives: Number(batch[7]), // uint256 falsePositives
+              approved: batch.accepted,               // bool accepted
+              contributorHash: batch.contributorHash,        // bytes32 contributorHash
+              isPublic: batch.isPublic,               // bool isPublic
+              voteCount: Number(batch.confirmations),      // uint256 confirmations
+              falsePositives: Number(batch.falsePositives), // uint256 falsePositives
               iocCount: iocCount,
               iocData: iocData,
               isEncrypted: isEncrypted,
@@ -251,15 +286,15 @@ export default function BatchBrowser() {
               networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
               chainId: network.chainId,
               cid: cid,
-              cidCommitment: batch[0],
-              merkleRoot: batch[1],
+              cidCommitment: batch.cidCommitment,
+              merkleRoot: batch.merkleRoot,
               timestamp: new Date(timestampRaw * 1000).toLocaleString(),
               timestampRaw: timestampRaw,
-              approved: batch[3],
-              contributorHash: batch[4],
-              isPublic: batch[5],
-              voteCount: Number(batch[6]),
-              falsePositives: Number(batch[7]),
+              approved: batch.accepted,
+              contributorHash: batch.contributorHash,
+              isPublic: batch.isPublic,
+              voteCount: Number(batch.confirmations),
+              falsePositives: Number(batch.falsePositives),
               iocCount: 0,
               iocData: null,
               error: 'IPFS data unavailable',
