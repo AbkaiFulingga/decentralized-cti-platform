@@ -1,0 +1,107 @@
+// utils/infura-helpers.js
+
+/**
+ * Query events in small chunks to work with Infura free tier (10-block limit)
+ * @param {Contract} contract - ethers Contract instance
+ * @param {EventFilter} filter - Event filter from contract.filters.EventName()
+ * @param {number} startBlock - Starting block number
+ * @param {number|string} endBlock - Ending block number or 'latest'
+ * @param {Provider} provider - ethers provider
+ * @returns {Promise<Array>} - Array of events
+ */
+export async function queryEventsInChunks(contract, filter, startBlock, endBlock, provider) {
+  const CHUNK_SIZE = 10; // Infura free tier limit
+  const events = [];
+  
+  // Get latest block if endBlock is 'latest'
+  const latestBlock = endBlock === 'latest' ? await provider.getBlockNumber() : endBlock;
+  
+  console.log(`🔍 Querying events from block ${startBlock} to ${latestBlock} in ${CHUNK_SIZE}-block chunks...`);
+  
+  let currentStart = startBlock;
+  let retries = 0;
+  const MAX_RETRIES = 3;
+  
+  while (currentStart <= latestBlock) {
+    const currentEnd = Math.min(currentStart + CHUNK_SIZE - 1, latestBlock);
+    
+    try {
+      const chunkEvents = await contract.queryFilter(filter, currentStart, currentEnd);
+      events.push(...chunkEvents);
+      
+      if (chunkEvents.length > 0) {
+        console.log(`   ✅ Blocks ${currentStart}-${currentEnd}: ${chunkEvents.length} events`);
+      }
+      
+      currentStart = currentEnd + 1;
+      retries = 0; // Reset retries on success
+      
+      // Rate limiting - wait 100ms between chunks to avoid hitting rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error(`   ❌ Error querying blocks ${currentStart}-${currentEnd}:`, error.message);
+      
+      retries++;
+      if (retries >= MAX_RETRIES) {
+        console.error(`   ⚠️  Max retries reached, skipping blocks ${currentStart}-${currentEnd}`);
+        currentStart = currentEnd + 1;
+        retries = 0;
+      } else {
+        console.log(`   🔄 Retry ${retries}/${MAX_RETRIES}...`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
+      }
+    }
+  }
+  
+  console.log(`✅ Total events found: ${events.length}`);
+  return events;
+}
+
+/**
+ * Smart event query with automatic fallback to chunked queries
+ * @param {Contract} contract - ethers Contract instance
+ * @param {EventFilter} filter - Event filter
+ * @param {number} fromBlock - Starting block
+ * @param {number|string} toBlock - Ending block or 'latest'
+ * @param {Provider} provider - ethers provider
+ * @returns {Promise<Array>} - Array of events
+ */
+export async function smartQueryEvents(contract, filter, fromBlock, toBlock, provider) {
+  try {
+    // Try full range first (works for paid tier or small ranges)
+    console.log(`🔍 Attempting full range query: ${fromBlock} to ${toBlock}...`);
+    const events = await contract.queryFilter(filter, fromBlock, toBlock);
+    console.log(`✅ Full range query succeeded: ${events.length} events`);
+    return events;
+    
+  } catch (error) {
+    const errorStr = JSON.stringify(error);
+    const isBlockRangeError = 
+      error.message?.includes('block range') || 
+      error.message?.includes('10 block') ||
+      error.code === -32600 ||
+      errorStr.includes('"code":-32600') ||
+      errorStr.includes('block range');
+      
+    if (isBlockRangeError) {
+      console.log(`⚠️  Infura block range limit detected, switching to chunked queries...`);
+      return await queryEventsInChunks(contract, filter, fromBlock, toBlock, provider);
+    } else {
+      console.error(`❌ Unexpected error:`, error.message);
+      throw error;
+    }
+  }
+}
+
+/**
+ * Get recent blocks safely (last N blocks, but not more than 10 at once for Infura)
+ * @param {Provider} provider - ethers provider
+ * @param {number} blocksBack - How many blocks to go back
+ * @returns {Promise<{from: number, to: number}>} - Block range
+ */
+export async function getSafeBlockRange(provider, blocksBack = 100) {
+  const latestBlock = await provider.getBlockNumber();
+  const fromBlock = Math.max(0, latestBlock - blocksBack);
+  return { from: fromBlock, to: latestBlock };
+}

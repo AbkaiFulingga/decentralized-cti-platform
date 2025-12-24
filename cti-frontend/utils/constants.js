@@ -12,9 +12,9 @@ export const NETWORKS = {
       decimals: 18
     },
     contracts: {
-      registry: "0xB490aBfFf0639453a8A5e5e52BF4E8055269cfE4",
-      governance: "0x1D9c49C737fE587bdBCE7a2a3e04293004216e18",
-      storage: "0x174d2a6FF20Bb0928B9e39BE8F65d823db73c983"
+      registry: "0xea816C1B93F5d76e03055BFcFE2ba5645341e09E",  // ✅ CORRECT - from test-addresses.json
+      governance: "0xfE4aDfFA3C1d855b21161B1f38167eC5c3C0d919",  // ✅ CORRECT - from test-addresses.json
+      storage: "0x6032c74688Be90A9E91d770bCe2d5D07d219ebDd"      // ✅ CORRECT - from test-addresses.json
     },
     gasPrice: 20,
     gasPriceUnit: "Gwei"
