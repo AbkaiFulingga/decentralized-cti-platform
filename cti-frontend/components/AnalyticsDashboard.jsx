@@ -153,19 +153,37 @@ export default function AnalyticsDashboard() {
       // Get recent batch events for heatmap (last 30 days only)
       const currentBlock = await provider.getBlockNumber();
       const blocksPerDay = network.chainId === 11155111 ? 7200 : 43200; // Sepolia: 12s, Arbitrum: 2s
-      const last30DaysBlocks = blocksPerDay * 30;
-      const startBlock = Math.max(network.deploymentBlock, currentBlock - last30DaysBlocks);
+      
+      // 🔥 CRITICAL OPTIMIZATION: Limit to last 3 days to avoid 429 errors
+      // Why 3 days? On Sepolia with free-tier RPC:
+      //   - 3 days = ~21,600 blocks = ~2,160 chunks = 36 minutes at 1 req/sec
+      //   - 7 days = ~50,400 blocks = ~5,040 chunks = 84 minutes (TOO SLOW)
+      // Heatmap shows 30 days but most recent activity is what matters for analytics
+      const daysToQuery = 3; // ✅ REDUCED from 30 to 3 for performance
+      const blocksToQuery = blocksPerDay * daysToQuery;
+      const recentStartBlock = currentBlock - blocksToQuery;
+      
+      // Use more recent of: deployment block OR 3 days ago
+      const safeStartBlock = Math.max(network.deploymentBlock, recentStartBlock);
+      
+      const estimatedChunks = Math.ceil((currentBlock - safeStartBlock) / 10);
+      const estimatedTime = Math.ceil(estimatedChunks * 1.0); // 1 second per chunk
       
       AppLogger.debug('Analytics', `Querying ${network.name} events`, {
-        startBlock,
+        deploymentBlock: network.deploymentBlock,
         currentBlock,
-        range: currentBlock - startBlock
+        recentStartBlock,
+        safeStartBlock,
+        range: currentBlock - safeStartBlock,
+        estimatedChunks,
+        estimatedTimeSeconds: estimatedTime,
+        note: `Querying last ${daysToQuery} days only for performance`
       });
       
       const filter = registry.filters.BatchSubmitted();
       
       // Query in chunks to avoid rate limits
-      const events = await queryEventsInChunks(registry, filter, startBlock, currentBlock);
+      const events = await queryEventsInChunks(registry, filter, safeStartBlock, currentBlock);
       
       // Build daily submission map AND count unique contributors
       const dailySubmissions = {};
@@ -212,24 +230,38 @@ export default function AnalyticsDashboard() {
     }
   };
 
-  // Simple chunked query (500ms delays)
+  // Simple chunked query (1000ms delays for L1 to avoid 429 errors)
   const queryEventsInChunks = async (contract, filter, startBlock, endBlock) => {
     const CHUNK_SIZE = 10; // ✅ FIX: Free tier RPC limit (was 10000, caused errors)
+    const DELAY_MS = 1000; // ✅ INCREASED: 1 req/sec for large queries (was 500ms = 2 req/sec)
     const events = [];
+    
+    const totalChunks = Math.ceil((endBlock - startBlock + 1) / CHUNK_SIZE);
+    AppLogger.info('Analytics', `Querying ${totalChunks} chunks with ${DELAY_MS}ms delays (ETA: ${Math.ceil(totalChunks * DELAY_MS / 1000)}s)`);
     
     for (let i = startBlock; i <= endBlock; i += CHUNK_SIZE) {
       const chunkEnd = Math.min(i + CHUNK_SIZE - 1, endBlock);
       try {
         const chunkEvents = await contract.queryFilter(filter, i, chunkEnd);
         events.push(...chunkEvents);
-        // Rate limit: 500ms between chunks (2 req/sec safe for free tier)
-        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // ✅ FIX: Increased delay to 1000ms (1 req/sec) to avoid overwhelming Alchemy free tier
+        // Free tier = 300 CU/sec, eth_getLogs = ~20-50 CU, so max ~6-15 req/sec theoretical
+        // But with 10-block chunks returning data, stay conservative at 1 req/sec
+        await new Promise(resolve => setTimeout(resolve, DELAY_MS));
       } catch (error) {
         AppLogger.warn('Analytics', `Chunk ${i}-${chunkEnd} failed`, error);
-        // Continue with other chunks
+        
+        // ✅ FIX: If 429 error, wait longer before continuing
+        if (error.message && error.message.includes('429')) {
+          AppLogger.warn('Analytics', 'Rate limit hit, waiting 5 seconds...');
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+        // Continue with other chunks even if one fails
       }
     }
     
+    AppLogger.info('Analytics', `Query complete: ${events.length} events retrieved`);
     return events;
   };
 
