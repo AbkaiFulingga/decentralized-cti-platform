@@ -9,7 +9,7 @@
     "0xf78afa5E41eDF35c05c1aEB082C1789283b09d3B",
     "0x0D5CaD75D37adA5A81EbEe04387229a40B0a457f"
   ],
-  "threshold": 2,
+  "threshold": 3,
   "features": {
     "tieredStaking": true,
     "adminRewards": true,

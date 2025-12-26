@@ -8,13 +8,15 @@ This is a **blockchain-based Cyber Threat Intelligence (CTI) sharing platform** 
 
 1. **Smart Contracts** (`contracts/`)
    - `PrivacyPreservingRegistry.sol`: Main IOC registry with tiered staking (0.01/0.05/0.1 ETH) and dual-mode submissions (public/anonymous with 256-bit commitments)
-   - `ThresholdGovernance.sol`: 2-of-3 multi-signature admin approval system for batch validation
-   - `MerkleZKRegistry.sol`: Merkle proof validation for individual IOC verification
+   - `ThresholdGovernance.sol`: 3-of-3 multi-signature admin approval system for batch validation (all admins must approve)
+   - `MerkleZKRegistry.sol`: Groth16 zkSNARK verification for anonymous submissions (L2 only)
+   - `Groth16Verifier.sol`: Auto-generated pairing-based verifier from circom circuit
    - `OracleIOCFeed.sol`: Automated threat feed ingestion (AbuseIPDB integration)
    - `StorageContribution.sol`: Distributed IPFS pinning incentive mechanism
 
 2. **Backend Scripts** (`scripts/`)
-   - Deployment: `deployComplete.js` deploys all contracts atomically and links them
+   - Deployment: `deployComplete.js` deploys all contracts atomically with threshold=3 and links them
+   - Merkle automation: `auto-rebuild-poseidon-tree.js` runs as PM2 daemon (every 60s) to rebuild Poseidon contributor tree
    - Oracle service: `oracle-service.js` runs as PM2 daemon (`npm run oracle:pm2`) to auto-submit threat feeds
    - STIX conversion: `stix-utils.js` converts flat IOC arrays to STIX 2.1 format with auto-pattern detection
 
@@ -71,12 +73,14 @@ await registry.addBatch(response.data.IpfsHash, root);
 **Anonymous mode** uses `keccak256(abi.encodePacked(address, nonce))` as commitment instead of exposing submitter address.
 
 ### Governance Approval
-Batches require **2-of-3 admin approvals** before acceptance:
+Batches require **3-of-3 admin approvals** (all admins must approve) before acceptance:
 ```javascript
 // Admin 1
 await governance.connect(admin1).approveBatch(batchIndex);
-// Admin 2 (triggers auto-execution at threshold)
+// Admin 2
 await governance.connect(admin2).approveBatch(batchIndex);
+// Admin 3 (triggers auto-execution at threshold)
+await governance.connect(admin3).approveBatch(batchIndex);
 ```
 
 Auto-execution calls `registry.acceptBatch()` which updates contributor reputation (+7/+10/+15 based on tier).
