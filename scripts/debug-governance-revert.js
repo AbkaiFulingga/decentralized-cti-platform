@@ -38,7 +38,9 @@ async function debugGovernanceRevert() {
   }
   
   // Get signers
-  const [deployer, admin1, admin2, admin3] = await ethers.getSigners();
+  const signers = await ethers.getSigners();
+  const [deployer, admin1, admin2] = signers;
+  const admin3 = signers[3] || null; // May not exist
   
   // User's address from error logs
   const userAddress = '0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82';
@@ -47,7 +49,11 @@ async function debugGovernanceRevert() {
   console.log(`   Deployer: ${deployer.address}`);
   console.log(`   Admin1: ${admin1.address}`);
   console.log(`   Admin2: ${admin2.address}`);
-  console.log(`   Admin3: ${admin3.address}`);
+  if (admin3) {
+    console.log(`   Admin3: ${admin3.address}`);
+  } else {
+    console.log(`   Admin3: (not configured in hardhat.config.js)`);
+  }
   console.log(`   User from error: ${userAddress}\n`);
   
   // Connect to contracts
@@ -72,7 +78,9 @@ async function debugGovernanceRevert() {
   
   // 2. Check admin status for all addresses
   console.log('\n=== ADMIN AUTHORIZATION ===\n');
-  const checkAddresses = [deployer.address, admin1.address, admin2.address, admin3.address, userAddress];
+  const checkAddresses = [deployer.address, admin1.address, admin2.address];
+  if (admin3) checkAddresses.push(admin3.address);
+  checkAddresses.push(userAddress);
   
   for (const addr of checkAddresses) {
     try {
@@ -112,7 +120,10 @@ async function debugGovernanceRevert() {
           
           // Check approval status for each admin
           console.log(`   Approval status:`);
-          for (const addr of [deployer.address, admin1.address, admin2.address, admin3.address]) {
+          const adminAddrs = [deployer.address, admin1.address, admin2.address];
+          if (admin3) adminAddrs.push(admin3.address);
+          
+          for (const addr of adminAddrs) {
             try {
               const hasApproved = await governance.hasAdminApproved(i, addr);
               const isAdmin = await governance.isAdmin(addr);
