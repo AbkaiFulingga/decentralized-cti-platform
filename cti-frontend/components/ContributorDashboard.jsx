@@ -229,10 +229,12 @@ export default function ContributorDashboard() {
       const count = Number(countBigInt);
       console.log(`   Found ${count} total batches`);
       
-      // Fetch BatchAdded events to get CIDs (using smart chunked queries)
+      // Fetch BatchAdded events to get CIDs (using smart chunked queries from deployment block)
       console.log('   🔎 Fetching BatchAdded events...');
       const filter = registry.filters.BatchAdded();
-      const events = await smartQueryEvents(registry, filter, 0, 'latest', provider);
+      const startBlock = currentNetwork.deploymentBlock || 0;
+      const events = await smartQueryEvents(registry, filter, startBlock, 'latest', provider);
+      console.log(`   ✅ Fetched ${events.length} events (from block ${startBlock})`);
       
       const cidMap = {};
       events.forEach(event => {

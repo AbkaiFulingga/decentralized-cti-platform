@@ -194,16 +194,17 @@ export default function AdminGovernancePanel() {
       
       console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
       
-      // Query events to get CIDs with smart chunked queries
+      // Query events to get CIDs with smart chunked queries (from deployment block)
       console.log('Fetching BatchAdded events...');
       const batchAddedFilter = registry.filters.BatchAdded();
-      const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider);
+      const startBlock = currentNetwork.deploymentBlock || 0;
+      const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', provider);
       
       const cidMap = {};
       events.forEach(event => {
         cidMap[Number(event.args.index)] = event.args.cid;
       });
-      console.log(`Retrieved ${events.length} events`);
+      console.log(`Retrieved ${events.length} events (from block ${startBlock})`);
       
       const pending = [];
       

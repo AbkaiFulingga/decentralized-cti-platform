@@ -111,10 +111,11 @@ export default function TransactionHistory() {
           const batchCount = await registry.getBatchCount();
           console.log(`📦 ${name}: ${batchCount} total batches`);
           
-          // Query events to get CIDs with smart chunked queries
+          // Query events to get CIDs with smart chunked queries (from deployment block)
           const batchAddedFilter = registry.filters.BatchAdded();
-          const events = await smartQueryEvents(registry, batchAddedFilter, 0, 'latest', networkProvider);
-          console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events`);
+          const startBlock = config.deploymentBlock || 0;
+          const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', networkProvider);
+          console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events (from block ${startBlock})`);
       
           const cidMap = {};
           events.forEach(event => {

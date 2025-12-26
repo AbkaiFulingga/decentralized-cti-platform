@@ -129,11 +129,12 @@ export default function BatchBrowser() {
       const batchAddedFilter = registry.filters.BatchAdded();
       const batchZKFilter = registry.filters.BatchAddedWithZKProof();
       
+      const startBlock = network.deploymentBlock || 0;
       const [batchAddedEvents, batchZKEvents] = await Promise.all([
-        smartQueryEvents(registry, batchAddedFilter, 0, 'latest', provider),
-        smartQueryEvents(registry, batchZKFilter, 0, 'latest', provider)
+        smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', provider),
+        smartQueryEvents(registry, batchZKFilter, startBlock, 'latest', provider)
       ]);
-      console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name}`);
+      console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name} (from block ${startBlock})`);
       
       // Combine and sort events by batch index
       const allEvents = [...batchAddedEvents, ...batchZKEvents];
