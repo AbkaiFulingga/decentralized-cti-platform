@@ -75,29 +75,55 @@ class Validator {
   }
 
   static isValidContributorTree(tree) {
-    if (!tree || typeof tree !== 'object') return false;
-    if (!this.isValidHexString(tree.root)) return false;
+    if (!tree || typeof tree !== 'object') {
+      console.warn('Validator: tree is null or not an object');
+      return false;
+    }
+    
+    if (!this.isValidHexString(tree.root)) {
+      console.warn('Validator: invalid root:', tree.root);
+      return false;
+    }
     
     // ✅ FIX: Support both array formats:
     // - Simple array: ["0x123...", "0x456..."]
     // - Object array: [{address: "0x123...", leafIndex: 0, isRealContributor: true}, ...]
-    if (!this.isNonEmptyArray(tree.contributors)) return false;
+    if (!this.isNonEmptyArray(tree.contributors)) {
+      console.warn('Validator: contributors not a non-empty array:', tree.contributors);
+      return false;
+    }
     
     // Validate first contributor element format
     const firstContributor = tree.contributors[0];
     if (typeof firstContributor === 'string') {
       // Simple string array format (legacy)
-      if (!this.isValidEthereumAddress(firstContributor)) return false;
-    } else if (typeof firstContributor === 'object' && firstContributor.address) {
-      // Object array format (current)
-      if (!this.isValidEthereumAddress(firstContributor.address)) return false;
+      if (!this.isValidEthereumAddress(firstContributor)) {
+        console.warn('Validator: first contributor not valid address (string format):', firstContributor);
+        return false;
+      }
+    } else if (typeof firstContributor === 'object' && firstContributor !== null) {
+      // Object array format (current) - check if it has address field
+      if (!firstContributor.address || !this.isValidEthereumAddress(firstContributor.address)) {
+        console.warn('Validator: first contributor missing or invalid address (object format):', firstContributor);
+        return false;
+      }
     } else {
       // Invalid format
+      console.warn('Validator: first contributor has invalid format (not string or object):', typeof firstContributor, firstContributor);
       return false;
     }
     
-    if (!this.isNonEmptyArray(tree.proofs)) return false;
-    if (typeof tree.contributorCount !== 'number') return false;
+    // ✅ FIX: Make proofs optional for compatibility (will fail later if actually needed)
+    if (tree.proofs !== undefined && !this.isNonEmptyArray(tree.proofs)) {
+      console.warn('Validator: proofs exists but is not a non-empty array:', tree.proofs);
+      return false;
+    }
+    
+    if (typeof tree.contributorCount !== 'number') {
+      console.warn('Validator: contributorCount not a number:', tree.contributorCount, typeof tree.contributorCount);
+      return false;
+    }
+    
     return true;
   }
 }
