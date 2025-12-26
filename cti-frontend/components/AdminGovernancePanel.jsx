@@ -176,6 +176,7 @@ export default function AdminGovernancePanel() {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const registryAddress = currentNetwork.contracts.registry;
+      const governanceAddress = currentNetwork.contracts.governance;
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
@@ -183,7 +184,12 @@ export default function AdminGovernancePanel() {
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
       
+      const governanceABI = [
+        "function batchApprovals(uint256) external view returns (uint256 approvalCount, bool executed, uint256 lastVoteTime)"
+      ];
+      
       const registry = new ethers.Contract(registryAddress, registryABI, signer);
+      const governance = new ethers.Contract(governanceAddress, governanceABI, signer);
       const count = await registry.getBatchCount();
       
       console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
@@ -205,7 +211,22 @@ export default function AdminGovernancePanel() {
         try {
           const batch = await registry.getBatch(i);
           
+          // Check if batch is already executed in governance
+          // Only show batches that are NOT accepted and NOT executed
           if (!batch.accepted) {
+            try {
+              const approval = await governance.batchApprovals(i);
+              
+              // Skip if governance has already executed this batch
+              if (approval.executed) {
+                console.log(`⏭️  Batch ${i} already executed, skipping`);
+                continue;
+              }
+            } catch (govError) {
+              console.warn(`Could not check governance status for batch ${i}:`, govError.message);
+              // Continue anyway if governance check fails
+            }
+            
             await new Promise(resolve => setTimeout(resolve, 500));
             
             const cid = cidMap[i];
@@ -308,12 +329,13 @@ export default function AdminGovernancePanel() {
       await tx.wait();
       
       console.log("✅ Batch approved!");
-      setSuccessMessage(`✅ Batch #${batchId} approved successfully on ${currentNetwork.name}!`);
+      setSuccessMessage(`✅ Batch #${batchId} approved successfully on ${currentNetwork.name}! Processing...`);
       
-      // Auto-clear success message after 5 seconds
-      setTimeout(() => setSuccessMessage(''), 5000);
-      
-      await loadPendingBatches();
+      // Auto-refresh after 5 seconds to hide approved batches
+      setTimeout(() => {
+        setSuccessMessage('');
+        loadPendingBatches();
+      }, 5000);
       
     } catch (error) {
       console.error('Approval error:', error);

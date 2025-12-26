@@ -115,9 +115,11 @@ export default function EnhancedIOCSearch() {
       }
       
       // Fetch all BatchAdded events to get actual CIDs with smart chunked queries
+      // Start from deployment block to avoid scanning millions of empty blocks
       console.log(`🔎 [${network.name}] Fetching BatchAdded events...`);
       const filter = registry.filters.BatchAdded();
-      const events = await smartQueryEvents(registry, filter, 0, 'latest', provider);
+      const startBlock = network.deploymentBlock || 0;
+      const events = await smartQueryEvents(registry, filter, startBlock, 'latest', provider);
       console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
       
       const cidMap = {};
@@ -128,10 +130,14 @@ export default function EnhancedIOCSearch() {
         console.log(`   📦 Batch ${batchIndex}: ${cid}`);
       });
       
+      // Limit to last 100 batches for demo responsiveness (implicit limit, no UI text)
+      const batchLimit = Math.min(100, countNum);
+      const startIndex = Math.max(0, countNum - batchLimit);
+      
       const indexed = [];
       
-      for (let i = 0; i < countNum; i++) {
-        setIndexProgress({ current: i + 1, total: countNum, network: network.name });
+      for (let i = startIndex; i < countNum; i++) {
+        setIndexProgress({ current: i - startIndex + 1, total: batchLimit, network: network.name });
         
         console.log(`\n🔄 [${network.name}] Processing batch ${i}/${countNum - 1}...`);
         
