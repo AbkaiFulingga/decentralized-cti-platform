@@ -77,7 +77,25 @@ class Validator {
   static isValidContributorTree(tree) {
     if (!tree || typeof tree !== 'object') return false;
     if (!this.isValidHexString(tree.root)) return false;
+    
+    // ✅ FIX: Support both array formats:
+    // - Simple array: ["0x123...", "0x456..."]
+    // - Object array: [{address: "0x123...", leafIndex: 0, isRealContributor: true}, ...]
     if (!this.isNonEmptyArray(tree.contributors)) return false;
+    
+    // Validate first contributor element format
+    const firstContributor = tree.contributors[0];
+    if (typeof firstContributor === 'string') {
+      // Simple string array format (legacy)
+      if (!this.isValidEthereumAddress(firstContributor)) return false;
+    } else if (typeof firstContributor === 'object' && firstContributor.address) {
+      // Object array format (current)
+      if (!this.isValidEthereumAddress(firstContributor.address)) return false;
+    } else {
+      // Invalid format
+      return false;
+    }
+    
     if (!this.isNonEmptyArray(tree.proofs)) return false;
     if (typeof tree.contributorCount !== 'number') return false;
     return true;

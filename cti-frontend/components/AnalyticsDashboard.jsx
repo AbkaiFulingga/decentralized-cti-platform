@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
 import { smartQueryEvents } from '../utils/infura-helpers';
+import { fetchIPFSWithRateLimit, batchFetchIPFS } from '../utils/rate-limiter';
 
 export default function AnalyticsDashboard() {
   const [walletConnected, setWalletConnected] = useState(false);
@@ -132,25 +133,31 @@ export default function AnalyticsDashboard() {
       });
       
       // Calculate total IOCs by fetching from IPFS using actual CIDs (not commitments)
+      // ✅ OPTIMIZATION: Sample only first 10 batches instead of all, use rate-limited fetches
       let totalIOCs = 0;
-      for (let i = 0; i < Math.min(count, 20); i++) {
-        try {
-          const cid = cidMap[i];
-          
-          // Skip if no CID or if it's a hex string (commitment, not actual IPFS CID)
-          if (!cid || cid.startsWith('0x') || cid.length < 10) {
-            continue;
-          }
-          
-          const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
-          const result = await response.json();
-          if (result.success && result.data.iocs) {
-            totalIOCs += result.data.iocs.length;
-          }
-        } catch (error) {
-          console.error(`Error counting IOCs in batch ${i}`);
+      const sampleSize = Math.min(count, 10);
+      
+      setLoadingProgress(`Sampling ${sampleSize} batches from ${network.name}...`);
+      
+      const validCids = [];
+      for (let i = 0; i < sampleSize; i++) {
+        const cid = cidMap[i];
+        // Skip if no CID or if it's a hex string (commitment, not actual IPFS CID)
+        if (cid && !cid.startsWith('0x') && cid.length >= 10) {
+          validCids.push(cid);
         }
       }
+      
+      // ✅ Batch fetch with rate limiting
+      const iocCounts = await batchFetchIPFS(validCids, 3, (current, total) => {
+        setLoadingProgress(`Fetching IOCs: ${current}/${total} from ${network.name}...`);
+      });
+      
+      iocCounts.forEach(data => {
+        if (data && data.iocs) {
+          totalIOCs += data.iocs.length;
+        }
+      });
       
       const networkStats = {
         network: network.name,
@@ -282,19 +289,15 @@ export default function AnalyticsDashboard() {
           try {
             const batch = await registry.getBatch(i);
             
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
             const cid = cidMap[i];
             let iocCount = 0;
             
-            // Only fetch from IPFS if we have a valid CID
+            // Only fetch from IPFS if we have a valid CID - use rate limiter
             if (cid && !cid.startsWith('0x')) {
               try {
-                const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
-                const result = await response.json();
-                
-                if (result.success && result.data.iocs) {
-                  iocCount = result.data.iocs.length;
+                const data = await fetchIPFSWithRateLimit(cid, 3); // Medium-low priority
+                if (data && data.iocs) {
+                  iocCount = data.iocs.length;
                 }
               } catch (error) {
                 console.log(`⚠️ Could not fetch IOC count for batch ${i}:`, error.message);
@@ -358,25 +361,31 @@ export default function AnalyticsDashboard() {
           try {
             const batch = await registry.getBatch(i);
             
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // ✅ Use rate limiter for IPFS fetches
+            const cid = cidMap[i];
             
-            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
-            const result = await response.json();
-            
-            if (result.success && result.data.iocs) {
-              result.data.iocs.forEach(ioc => {
-                if (/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/.test(ioc)) {
-                  types.ips++;
-                } else if (/^[a-f0-9]{32,64}$/i.test(ioc)) {
-                  types.hashes++;
-                } else if (/^https?:\/\//.test(ioc)) {
-                  types.urls++;
-                } else if (/\.[a-z]{2,}$/i.test(ioc)) {
-                  types.domains++;
-                } else {
-                  types.other++;
+            if (cid && !cid.startsWith('0x')) {
+              try {
+                const data = await fetchIPFSWithRateLimit(cid, 2); // Low priority for type analysis
+                
+                if (data && data.iocs) {
+                  data.iocs.forEach(ioc => {
+                    if (/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}/.test(ioc)) {
+                      types.ips++;
+                    } else if (/^[a-f0-9]{32,64}$/i.test(ioc)) {
+                      types.hashes++;
+                    } else if (/^https?:\/\//.test(ioc)) {
+                      types.urls++;
+                    } else if (/\.[a-z]{2,}$/i.test(ioc)) {
+                      types.domains++;
+                    } else {
+                      types.other++;
+                    }
+                  });
                 }
-              });
+              } catch (error) {
+                console.log(`⚠️  Error fetching IOCs for type analysis:`, error.message);
+              }
             }
           } catch (error) {
             console.error(`Error analyzing batch ${i}:`, error.message);

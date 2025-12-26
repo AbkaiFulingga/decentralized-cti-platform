@@ -1,7 +1,8 @@
 // utils/infura-helpers.js
 
 /**
- * Query events in small chunks to work with Infura free tier (10-block limit)
+ * Query events in small chunks to work with free-tier RPC providers (10-block limit)
+ * Works with Alchemy, Infura, Pinata RPC, and other providers with block range limits
  * @param {Contract} contract - ethers Contract instance
  * @param {EventFilter} filter - Event filter from contract.filters.EventName()
  * @param {number} startBlock - Starting block number
@@ -10,7 +11,7 @@
  * @returns {Promise<Array>} - Array of events
  */
 export async function queryEventsInChunks(contract, filter, startBlock, endBlock, provider) {
-  const CHUNK_SIZE = 10; // Infura free tier limit
+  const CHUNK_SIZE = 10; // Free tier RPC limit
   const RATE_LIMIT_DELAY = 300; // 300ms delay between chunks (was 100ms)
   const events = [];
   
@@ -37,7 +38,7 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
       currentStart = currentEnd + 1;
       retries = 0; // Reset retries on success
       
-      // Rate limiting - wait 300ms between chunks to avoid Alchemy compute unit limits
+      // Rate limiting - wait 300ms between chunks to avoid RPC provider compute unit limits
       await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
       
     } catch (error) {
@@ -74,6 +75,7 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
 /**
  * Smart event query with automatic fallback to chunked queries
  * Optimizes by using deployment block or recent blocks instead of querying from 0
+ * Works with any RPC provider (Alchemy, Infura, Pinata, QuickNode, etc.)
  * @param {Contract} contract - ethers Contract instance
  * @param {EventFilter} filter - Event filter
  * @param {number} fromBlock - Starting block (use network.deploymentBlock for optimization)
@@ -106,7 +108,7 @@ export async function smartQueryEvents(contract, filter, fromBlock, toBlock, pro
       errorStr.includes('block range');
       
     if (isBlockRangeError) {
-      console.log(`⚠️  Infura block range limit detected, switching to chunked queries...`);
+      console.log(`⚠️  RPC provider block range limit detected, switching to chunked queries...`);
       return await queryEventsInChunks(contract, filter, fromBlock, toBlock, provider);
     } else {
       console.error(`❌ Unexpected error:`, error.message);
