@@ -1,9 +1,15 @@
 // utils/zksnark-prover.js
 /**
- * Browser-based zkSNARK Proof Generation
+ * Browser-based zkSNARK Proof Generation (DIRECTION1 Compliant)
  * 
- * This module generates Groth16 zkSNARK proofs in the browser using snarkjs.
+ * Generates Groth16 zkSNARK proofs in the browser using snarkjs.
  * Proves that a contributor is registered without revealing their identity.
+ * 
+ * DIRECTION1 Requirements:
+ * - Poseidon hashing for zkSNARK-friendly Merkle trees
+ * - 20-level tree depth (supports 1,048,576 contributors)
+ * - Browser-based proof generation (~10 seconds)
+ * - Commitment = Poseidon(address, nonce)
  * 
  * Circuit Inputs:
  *   - Public: commitment (hash of address + nonce), merkleRoot
@@ -13,280 +19,440 @@
  */
 
 import { ethers } from 'ethers';
-import { MerkleTree } from 'merkletreejs';
-import keccak256 from 'keccak256';
 
-// Dynamic import for snarkjs (only works in browser)
-let snarkjs = null;
-if (typeof window !== 'undefined') {
-  import('snarkjs').then(module => {
-    snarkjs = module;
-  }).catch(err => {
-    console.error('Failed to load snarkjs:', err);
-  });
+// Configuration constants
+const CONFIG = {
+  MERKLE_TREE_LEVELS: 20,           // DIRECTION1: Supports 1M+ contributors
+  TREE_STALENESS_WARNING_HOURS: 2,  // Warn if tree older than 2 hours (rebuilds every 60s)
+  TREE_STALENESS_ERROR_HOURS: 48,   // Error if tree older than 48 hours
+  DEBUG_LOGGING: false,              // Set to true for verbose console output
+  PROOF_GENERATION_TIMEOUT_MS: 60000 // 60 second timeout
+};
+
+/**
+ * Logger utility with configurable levels
+ */
+class Logger {
+  constructor(enabled = CONFIG.DEBUG_LOGGING) {
+    this.enabled = enabled;
+  }
+
+  log(...args) {
+    if (this.enabled) console.log(...args);
+  }
+
+  warn(...args) {
+    console.warn(...args);
+  }
+
+  error(...args) {
+    console.error(...args);
+  }
+
+  info(...args) {
+    console.log(...args); // Always show info
+  }
 }
 
+const logger = new Logger();
+
+/**
+ * Validation utilities
+ */
+class Validator {
+  static isValidEthereumAddress(address) {
+    return typeof address === 'string' && 
+           /^0x[a-fA-F0-9]{40}$/.test(address);
+  }
+
+  static isValidHexString(str) {
+    return typeof str === 'string' && 
+           /^0x[a-fA-F0-9]+$/.test(str);
+  }
+
+  static isNonEmptyArray(arr) {
+    return Array.isArray(arr) && arr.length > 0;
+  }
+
+  static isValidContributorTree(tree) {
+    if (!tree || typeof tree !== 'object') return false;
+    if (!this.isValidHexString(tree.root)) return false;
+    if (!this.isNonEmptyArray(tree.contributors)) return false;
+    if (!this.isNonEmptyArray(tree.proofs)) return false;
+    if (typeof tree.contributorCount !== 'number') return false;
+    return true;
+  }
+}
+
+/**
+ * Main zkSNARK Prover class
+ */
 export class ZKSnarkProver {
+  // Class constants
+  static MERKLE_TREE_LEVELS = CONFIG.MERKLE_TREE_LEVELS;
+  static STALENESS_WARNING_HOURS = CONFIG.TREE_STALENESS_WARNING_HOURS;
+  static STALENESS_ERROR_HOURS = CONFIG.TREE_STALENESS_ERROR_HOURS;
+
   constructor() {
     this.wasmPath = '/circuits/contributor-proof.wasm';
     this.zkeyPath = '/circuits/contributor-proof_final.zkey';
-    this.circuitLoaded = false;
+    this.vkeyPath = '/circuits/verification_key.json';
+    
     this.contributorTree = null;
     this.poseidonCache = null;
+    this.snarkjsPromise = null;
+    
+    // Pre-initialize snarkjs in browser environment
+    if (typeof window !== 'undefined') {
+      this.snarkjsPromise = this._initializeSnarkjs();
+    }
+  }
+
+  /**
+   * Initialize snarkjs library (async, cached)
+   * ✅ FIX: Proper async initialization, no race conditions
+   */
+  async _initializeSnarkjs() {
+    if (this.snarkjs) return this.snarkjs;
+    
+    try {
+      logger.log('📦 Loading snarkjs library...');
+      this.snarkjs = await import('snarkjs');
+      logger.log('✅ snarkjs loaded successfully');
+      return this.snarkjs;
+    } catch (error) {
+      logger.error('❌ Failed to load snarkjs:', error);
+      throw new Error(`snarkjs initialization failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Ensure snarkjs is loaded before use
+   */
+  async _ensureSnarkjs() {
+    if (!this.snarkjs) {
+      await this._initializeSnarkjs();
+    }
+    return this.snarkjs;
   }
 
   /**
    * Build Poseidon hash function (same as used in circuit)
-   * Caches the result for performance
+   * ✅ FIX: Proper error handling and validation
    */
   async buildPoseidon() {
     if (this.poseidonCache) {
       return this.poseidonCache;
     }
     
-    // Use poseidon from circomlibjs (same library used by circuits)
-    const poseidonModule = await import('circomlibjs');
-    this.poseidonCache = await poseidonModule.buildPoseidon();
-    return this.poseidonCache;
+    try {
+      logger.log('⚙️  Initializing Poseidon hash function...');
+      const poseidonModule = await import('circomlibjs');
+      this.poseidonCache = await poseidonModule.buildPoseidon();
+      logger.log('✅ Poseidon initialized');
+      return this.poseidonCache;
+    } catch (error) {
+      logger.error('❌ Failed to build Poseidon:', error);
+      throw new Error(`Poseidon initialization failed: ${error.message}`);
+    }
   }
 
   /**
    * Load contributor Merkle tree from backend API
-   * Required before proof generation to get Merkle proof
+   * ✅ FIX: Comprehensive validation and error handling
    */
   async loadContributorTree() {
     try {
-      console.log('📡 Loading contributor Merkle tree...');
+      logger.info('📡 Loading contributor Merkle tree from /api/contributor-tree...');
       
       const response = await fetch('/api/contributor-tree');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
       const result = await response.json();
       
       if (!result.success) {
-        throw new Error(result.error || 'Failed to load tree');
+        throw new Error(result.error || 'API returned success=false');
+      }
+      
+      // ✅ FIX: Robust validation
+      if (!Validator.isValidContributorTree(result)) {
+        throw new Error('Invalid tree structure received from API');
       }
       
       this.contributorTree = result;
       
-      console.log('✅ Contributor tree loaded:');
-      console.log(`   - ${result.contributorCount} contributors in tree`);
-      console.log(`   - Contributors:`, result.contributors);
-      console.log(`   - Merkle root: ${result.root}`);
-      console.log(`   - Last update: ${new Date(result.timestamp).toLocaleString()}`);
+      logger.info('✅ Contributor tree loaded successfully:');
+      logger.info(`   - ${result.contributorCount} contributors in tree`);
+      logger.info(`   - Merkle root: ${result.root}`);
+      logger.info(`   - Last update: ${new Date(result.timestamp).toLocaleString()}`);
       
-      // Check freshness
+      // ✅ FIX: Improved freshness checking
       const ageHours = parseFloat(result.freshness?.ageHours || 0);
-      if (ageHours > 48) {
-        console.warn(`⚠️  Tree is ${ageHours.toFixed(1)} hours old - may be stale`);
+      if (ageHours > ZKSnarkProver.STALENESS_ERROR_HOURS) {
+        throw new Error(`Tree is critically stale (${ageHours.toFixed(1)} hours old). Rebuilder may be down.`);
+      } else if (ageHours > ZKSnarkProver.STALENESS_WARNING_HOURS) {
+        logger.warn(`⚠️  Tree is ${ageHours.toFixed(1)} hours old (expected <2h with 60s rebuild interval)`);
+      } else {
+        logger.log(`✅ Tree freshness: ${ageHours.toFixed(1)} hours (good)`);
       }
       
       return true;
       
     } catch (error) {
-      console.error('❌ Failed to load contributor tree:', error);
-      return false;
+      logger.error('❌ Failed to load contributor tree:', error);
+      this.contributorTree = null;
+      throw new Error(`Tree loading failed: ${error.message}`);
     }
   }
 
   /**
    * Check if address is in the contributor tree
-   * ✅ FIX: Check contributors array directly (raw addresses), not leaves (Poseidon hashes)
+   * ✅ FIX: Proper validation and type checking
    */
   isAddressInTree(address) {
     if (!this.contributorTree) {
-      throw new Error('Contributor tree not loaded');
+      throw new Error('Contributor tree not loaded - call loadContributorTree() first');
+    }
+    
+    // ✅ FIX: Validate address format
+    if (!Validator.isValidEthereumAddress(address)) {
+      throw new Error(`Invalid Ethereum address format: ${address}`);
     }
     
     const addressLower = address.toLowerCase();
     
-    // ✅ FIX: The tree uses Poseidon hashing, so leaves are Poseidon(address)
-    // We can't verify with keccak256. Instead, check if address exists in contributors array
-    if (this.contributorTree.contributors && Array.isArray(this.contributorTree.contributors)) {
-      return this.contributorTree.contributors.some(
-        c => c && c.address && c.address.toLowerCase() === addressLower
-      );
+    // Check if contributors array exists and is valid
+    if (!Validator.isNonEmptyArray(this.contributorTree.contributors)) {
+      return false;
     }
     
-    // Fallback: old tree format with just addresses array
-    if (Array.isArray(this.contributorTree.contributors)) {
-      return this.contributorTree.contributors.includes(addressLower);
-    }
-    
-    return false;
+    // ✅ FIX: Safe iteration with type checking
+    return this.contributorTree.contributors.some(contributor => {
+      // Handle both object format {address: "0x..."} and string format
+      if (typeof contributor === 'string') {
+        return contributor.toLowerCase() === addressLower;
+      }
+      
+      if (contributor && 
+          typeof contributor.address === 'string' && 
+          Validator.isValidEthereumAddress(contributor.address)) {
+        return contributor.address.toLowerCase() === addressLower;
+      }
+      
+      return false;
+    });
   }
 
   /**
    * Get Merkle proof for an address
-   * Uses Poseidon hash (same as circuit) to reconstruct tree
-   * Returns the path elements and indices needed for circuit
+   * ✅ FIX: Comprehensive error handling and validation
    */
   getMerkleProof(address) {
     if (!this.contributorTree) {
       throw new Error('Contributor tree not loaded');
     }
 
+    // ✅ FIX: Validate inputs
+    if (!Validator.isValidEthereumAddress(address)) {
+      throw new Error(`Invalid Ethereum address: ${address}`);
+    }
+
     const normalizedAddress = address.toLowerCase();
     
-    console.log('🔍 Debug getMerkleProof:');
-    console.log('   Address:', address);
-    console.log('   Normalized:', normalizedAddress);
-    console.log('   Tree has', this.contributorTree.contributors?.length || 0, 'contributors');
+    logger.log('🔍 Getting Merkle proof for:', normalizedAddress);
     
-    // Find leaf index by searching in contributors array (not leaves, which are hashed)
-    const leafIndex = this.contributorTree.contributors?.findIndex(
-      c => c.address.toLowerCase() === normalizedAddress
-    );
+    // ✅ FIX: Proper findIndex check (returns -1 when not found, never undefined)
+    const leafIndex = this.contributorTree.contributors?.findIndex(contributor => {
+      const addr = typeof contributor === 'string' 
+        ? contributor 
+        : contributor?.address;
+      return addr && addr.toLowerCase() === normalizedAddress;
+    });
     
-    if (leafIndex === -1 || leafIndex === undefined) {
-      console.error('❌ Address not found!');
-      console.error('   Your address:', normalizedAddress);
-      console.error('   First 5 addresses in tree:', 
-        this.contributorTree.contributors?.slice(0, 5).map(c => c.address) || []
-      );
-      throw new Error('Address not found in contributor tree');
+    if (leafIndex === -1) {
+      logger.error('❌ Address not found in tree!');
+      logger.error('   Your address:', normalizedAddress);
+      logger.error('   Tree has', this.contributorTree.contributors?.length || 0, 'contributors');
+      throw new Error(`Address ${normalizedAddress} not found in contributor tree`);
     }
     
-    console.log('✅ Found address at leaf index:', leafIndex);
+    logger.log('✅ Found address at leaf index:', leafIndex);
 
-    // Use precomputed proof from tree data (tree was built with Poseidon)
-    // Proofs are stored as array, find by matching leafIndex or address
-    if (this.contributorTree.proofs && Array.isArray(this.contributorTree.proofs)) {
-      console.log('🔍 Searching for proof in tree.proofs array...');
-      console.log('   Proofs array length:', this.contributorTree.proofs.length);
-      console.log('   Looking for leafIndex:', leafIndex);
-      console.log('   Looking for address:', normalizedAddress);
-      
-      const proofData = this.contributorTree.proofs.find(
-        p => p.leafIndex === leafIndex || p.address.toLowerCase() === normalizedAddress
-      );
-      
-      console.log('   Proof found?', !!proofData);
-      
-      if (proofData && proofData.proof) {
-        console.log('✅ Using precomputed Poseidon proof');
-        console.log('   Proof elements:', proofData.proof.length);
-        
-        // Convert proof array to pathElements format
-        // Generate pathIndices from leafIndex (binary representation)
-        const pathIndices = [];
-        let idx = leafIndex;
-        for (let i = 0; i < proofData.proof.length; i++) {
-          pathIndices.push(idx % 2);
-          idx = Math.floor(idx / 2);
-        }
-        
-        console.log('🔍 DEBUG: Checking root field...');
-        console.log('   this.contributorTree.root:', this.contributorTree.root);
-        console.log('   proofData.root:', proofData.root);
-        console.log('   Full contributorTree keys:', Object.keys(this.contributorTree));
-        
-        return {
-          pathElements: proofData.proof,
-          pathIndices: pathIndices,
-          leaf: this.contributorTree.leaves[leafIndex],
-          root: this.contributorTree.root || proofData.root  // Fallback to proofData.root if tree root missing
-        };
-      } else {
-        console.error('❌ Proof data structure issue:');
-        console.error('   proofData exists?', !!proofData);
-        console.error('   proofData.proof exists?', !!(proofData && proofData.proof));
-        if (proofData) {
-          console.error('   proofData keys:', Object.keys(proofData));
-        }
-      }
-    } else {
-      console.error('❌ Tree proofs not available:');
-      console.error('   this.contributorTree.proofs exists?', !!this.contributorTree.proofs);
-      console.error('   Is array?', Array.isArray(this.contributorTree.proofs));
+    // ✅ FIX: Validate proofs array exists
+    if (!Validator.isNonEmptyArray(this.contributorTree.proofs)) {
+      throw new Error('Tree proofs array is missing or empty - tree needs rebuild');
     }
-
-    throw new Error('Proof not found in tree data - tree needs to be rebuilt with proofs');
+    
+    // Find precomputed proof
+    const proofData = this.contributorTree.proofs.find(p => {
+      const proofAddr = typeof p.address === 'string' ? p.address.toLowerCase() : null;
+      return p.leafIndex === leafIndex || proofAddr === normalizedAddress;
+    });
+    
+    if (!proofData || !Validator.isNonEmptyArray(proofData.proof)) {
+      throw new Error(`Proof data not found for address at index ${leafIndex}`);
+    }
+    
+    logger.log('✅ Using precomputed Poseidon proof (depth:', proofData.proof.length, ')');
+    
+    // Generate path indices from leaf index (binary representation)
+    const pathIndices = [];
+    let idx = leafIndex;
+    for (let i = 0; i < proofData.proof.length; i++) {
+      pathIndices.push(idx % 2);
+      idx = Math.floor(idx / 2);
+    }
+    
+    // ✅ FIX: Validate all required fields exist
+    const result = {
+      pathElements: proofData.proof,
+      pathIndices: pathIndices,
+      leaf: this.contributorTree.leaves?.[leafIndex],
+      root: this.contributorTree.root
+    };
+    
+    // ✅ FIX: Explicit validation
+    if (!Validator.isValidHexString(result.root)) {
+      throw new Error('Invalid or missing tree root');
+    }
+    
+    if (!Validator.isNonEmptyArray(result.pathElements)) {
+      throw new Error('Invalid or missing path elements');
+    }
+    
+    logger.log('✅ Merkle proof ready:', {
+      pathElementsCount: result.pathElements.length,
+      pathIndicesCount: result.pathIndices.length,
+      root: result.root
+    });
+    
+    return result;
   }
 
   /**
    * Generate Groth16 zkSNARK proof for anonymous submission
+   * ✅ FIX: Comprehensive validation, timeout handling, better error messages
    * 
    * @param {string} address - Contributor's Ethereum address
-   * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment}
+   * @returns {Promise<Object>} Proof data: {pA, pB, pC, pubSignals, commitment, nonce}
    */
   async generateGroth16Proof(address) {
-    // Load snarkjs dynamically if not already loaded
-    if (!snarkjs) {
-      console.log('📦 Loading snarkjs library...');
-      snarkjs = await import('snarkjs');
-      console.log('✅ snarkjs loaded');
-    }
-
-    if (!this.contributorTree) {
-      throw new Error('Contributor tree not loaded - call loadContributorTree() first');
-    }
-
-    console.log('🔐 Starting Groth16 zkSNARK proof generation...');
-    console.log(`   Address: ${address}`);
-    console.log(`   Contributor tree root: ${this.contributorTree.root}`);
-
+    const startTime = Date.now();
+    
     try {
-      // Step 1: Get Merkle proof
-      console.log('📝 Step 1: Getting Merkle proof...');
+      // ✅ FIX: Ensure snarkjs is loaded (no race condition)
+      const snarkjs = await this._ensureSnarkjs();
+      
+      // ✅ FIX: Validate prerequisites
+      if (!this.contributorTree) {
+        throw new Error('Contributor tree not loaded - call loadContributorTree() first');
+      }
+      
+      if (!Validator.isValidEthereumAddress(address)) {
+        throw new Error(`Invalid Ethereum address: ${address}`);
+      }
+
+      logger.info('🔐 Starting Groth16 zkSNARK proof generation...');
+      logger.info(`   Address: ${address}`);
+      logger.info(`   Anonymity set: ${this.contributorTree.contributorCount} contributors`);
+
+      // Step 1: Get Merkle proof (with full validation)
+      logger.info('📝 Step 1/5: Getting Merkle proof...');
       const merkleProofData = this.getMerkleProof(address);
       
-      console.log(`   ✅ Leaf: ${merkleProofData.leaf}`);
-      console.log(`   ✅ Path elements: ${merkleProofData.pathElements?.length || 0}`);
-      console.log(`   ✅ Path indices: ${merkleProofData.pathIndices?.length || 0}`);
-      console.log(`   ✅ Root: ${merkleProofData.root}`);
-
-      // ✅ FIX: Use contributor tree root from loaded tree data
       const contributorTreeRoot = this.contributorTree.root;
-      console.log(`   ✅ Contributor tree root: ${contributorTreeRoot}`);
       
-      console.log('🔍 DEBUG: Before root comparison...');
-      console.log('   merkleProofData.root:', merkleProofData.root);
-      console.log('   merkleProofData type:', typeof merkleProofData.root);
-      console.log('   contributorTreeRoot:', contributorTreeRoot);
-      console.log('   contributorTreeRoot type:', typeof contributorTreeRoot);
-      console.log('   merkleProofData keys:', Object.keys(merkleProofData));
-      
-      // Verify root matches
-      if (!merkleProofData.root) {
-        throw new Error('❌ merkleProofData.root is undefined! Keys: ' + Object.keys(merkleProofData).join(', '));
+      // ✅ FIX: Explicit root validation
+      if (!Validator.isValidHexString(contributorTreeRoot)) {
+        throw new Error('Invalid contributor tree root');
       }
       
       if (merkleProofData.root.toLowerCase() !== contributorTreeRoot.toLowerCase()) {
-        throw new Error(`Merkle root mismatch: ${merkleProofData.root} vs ${contributorTreeRoot}`);
+        throw new Error(
+          `Merkle root mismatch:\n` +
+          `  Proof root: ${merkleProofData.root}\n` +
+          `  Tree root:  ${contributorTreeRoot}`
+        );
       }
+      
+      logger.info('   ✅ Merkle proof validated');
 
       // Step 2: Generate random nonce for commitment
-      console.log('🎲 Step 2: Generating commitment nonce...');
-      const nonce = ethers.toBigInt(ethers.hexlify(ethers.randomBytes(32)));
-      console.log(`   ✅ Nonce: ${nonce.toString().substring(0, 20)}...`);
+      logger.info('🎲 Step 2/5: Generating commitment nonce...');
+      let nonce;
+      try {
+        nonce = ethers.toBigInt(ethers.hexlify(ethers.randomBytes(32)));
+      } catch (error) {
+        throw new Error(`Failed to generate nonce: ${error.message}`);
+      }
+      logger.log(`   ✅ Nonce: ${nonce.toString().substring(0, 20)}...`);
 
       // Step 3: Calculate commitment using Poseidon hash
-      // Commitment = Poseidon(address, nonce) - matches contributor-proof.circom
-      console.log('🔐 Step 3: Computing Poseidon commitment...');
+      logger.info('🔐 Step 3/5: Computing Poseidon commitment...');
+      const poseidon = await this.buildPoseidon();
       const addressBigInt = ethers.toBigInt(address);
       
-      // Use Poseidon hash from snarkjs (same as circuit)
-      const poseidon = await this.buildPoseidon();
-      const commitmentHash = poseidon.F.toString(poseidon([addressBigInt, nonce]));
-      const commitment = '0x' + BigInt(commitmentHash).toString(16).padStart(64, '0');
+      // ✅ FIX: Safe BigInt conversion with validation
+      let commitment;
+      try {
+        const commitmentResult = poseidon([addressBigInt, nonce]);
+        const commitmentHash = poseidon.F.toString(commitmentResult);
+        
+        // Validate hash is numeric string
+        if (!/^\d+$/.test(commitmentHash)) {
+          throw new Error(`Invalid Poseidon output format: ${commitmentHash}`);
+        }
+        
+        const commitmentBigInt = BigInt(commitmentHash);
+        commitment = '0x' + commitmentBigInt.toString(16).padStart(64, '0');
+        
+        // Ensure no truncation occurred
+        if (commitment.length > 66) { // 0x + 64 chars
+          throw new Error(`Commitment hash too large: ${commitment.length} chars`);
+        }
+        
+      } catch (error) {
+        throw new Error(`Commitment calculation failed: ${error.message}`);
+      }
       
-      console.log(`   ✅ Commitment: ${commitment}`);
+      logger.info(`   ✅ Commitment: ${commitment}`);
 
       // Step 4: Prepare circuit inputs
-      console.log('📋 Step 3: Preparing circuit inputs...');
+      logger.info('📋 Step 4/5: Preparing circuit inputs...');
       
-      // Pad Merkle proof to 20 levels (circuit expects fixed-size arrays)
-      const MERKLE_TREE_LEVELS = 20;
-      const paddedProof = merkleProofData.pathElements.map(p => ethers.toBigInt(p));
-      const paddedIndices = merkleProofData.pathIndices;
+      // ✅ FIX: Use class constant instead of magic number
+      const LEVELS = ZKSnarkProver.MERKLE_TREE_LEVELS;
+      
+      // Convert and pad Merkle proof
+      const paddedProof = merkleProofData.pathElements.map(p => {
+        try {
+          return ethers.toBigInt(p);
+        } catch (error) {
+          throw new Error(`Invalid path element: ${p}`);
+        }
+      });
+      
+      const paddedIndices = [...merkleProofData.pathIndices];
       
       // Pad with zeros to reach required depth
-      while (paddedProof.length < MERKLE_TREE_LEVELS) {
+      while (paddedProof.length < LEVELS) {
         paddedProof.push(0n);
         paddedIndices.push(0);
       }
+      
+      // ✅ FIX: Validate all circuit inputs before proof generation
+      if (paddedProof.length !== LEVELS) {
+        throw new Error(`Invalid proof length: ${paddedProof.length} (expected ${LEVELS})`);
+      }
+      
+      if (paddedIndices.length !== LEVELS) {
+        throw new Error(`Invalid indices length: ${paddedIndices.length} (expected ${LEVELS})`);
+      }
 
       const circuitInputs = {
-        // Public inputs (must match circuit: commitment, merkleRoot)
+        // Public inputs
         commitment: ethers.toBigInt(commitment),
         merkleRoot: ethers.toBigInt(contributorTreeRoot),
         
@@ -297,43 +463,54 @@ export class ZKSnarkProver {
         merklePathIndices: paddedIndices
       };
 
-      console.log('   ✅ Circuit inputs prepared');
-      console.log(`   - Address: ${circuitInputs.address.toString().substring(0, 20)}...`);
-      console.log(`   - Nonce: ${circuitInputs.nonce.toString().substring(0, 20)}...`);
-      console.log(`   - Merkle proof depth: ${merkleProofData.pathElements.length}`);
+      logger.info('   ✅ Circuit inputs validated');
+      logger.log(`   - Proof depth: ${merkleProofData.pathElements.length} (padded to ${LEVELS})`);
 
-      // Step 5: Generate witness
-      console.log('⚙️  Step 4: Computing witness (calculating circuit)...');
-      console.log('   ⏱️  This may take 5-10 seconds...');
+      // Step 5: Generate witness and proof with timeout
+      logger.info('⚙️  Step 5/5: Computing witness and generating proof...');
+      logger.info('   ⏱️  This typically takes 5-15 seconds...');
       
-      const startWitness = Date.now();
+      const proofStartTime = Date.now();
       
-      const { proof: fullProof, publicSignals } = await snarkjs.groth16.fullProve(
+      // ✅ FIX: Add timeout protection
+      const proofPromise = snarkjs.groth16.fullProve(
         circuitInputs,
         this.wasmPath,
         this.zkeyPath
       );
       
-      const witnessTime = Date.now() - startWitness;
-      console.log(`   ✅ Witness computed in ${witnessTime}ms`);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Proof generation timeout (>${CONFIG.PROOF_GENERATION_TIMEOUT_MS}ms)`));
+        }, CONFIG.PROOF_GENERATION_TIMEOUT_MS);
+      });
+      
+      const { proof: fullProof, publicSignals } = await Promise.race([
+        proofPromise,
+        timeoutPromise
+      ]);
+      
+      const proofTime = Date.now() - proofStartTime;
+      logger.info(`   ✅ Proof computed in ${proofTime}ms`);
 
-      // Step 6: Format proof for Solidity
-      console.log('📦 Step 5: Formatting proof for Groth16Verifier.sol...');
+      // Step 6: Format proof for Solidity Groth16Verifier
+      logger.info('📦 Formatting proof for Groth16Verifier.sol...');
+      
+      // ✅ FIX: Validate proof structure
+      if (!fullProof || !fullProof.pi_a || !fullProof.pi_b || !fullProof.pi_c) {
+        throw new Error('Invalid proof structure returned from snarkjs');
+      }
       
       const pA = [fullProof.pi_a[0], fullProof.pi_a[1]];
       const pB = [
-        [fullProof.pi_b[0][1], fullProof.pi_b[0][0]], // Note: reversed order for Solidity
+        [fullProof.pi_b[0][1], fullProof.pi_b[0][0]], // Reversed for Solidity
         [fullProof.pi_b[1][1], fullProof.pi_b[1][0]]
       ];
       const pC = [fullProof.pi_c[0], fullProof.pi_c[1]];
 
-      console.log('   ✅ Proof formatted');
-      console.log(`   - pA: [${pA[0].substring(0, 20)}..., ${pA[1].substring(0, 20)}...]`);
-      console.log(`   - pB: 2x2 matrix`);
-      console.log(`   - pC: [${pC[0].substring(0, 20)}..., ${pC[1].substring(0, 20)}...]`);
-      console.log(`   - Public signals: ${publicSignals.length}`);
+      logger.info('   ✅ Proof formatted for Solidity');
 
-      // Step 7: Return formatted proof
+      // Final result
       const proofData = {
         pA,
         pB,
@@ -341,70 +518,100 @@ export class ZKSnarkProver {
         pubSignals: publicSignals,
         commitment,
         nonce: nonce.toString(),
-        generationTime: witnessTime
+        generationTime: proofTime,
+        totalTime: Date.now() - startTime
       };
 
-      console.log('✅ Groth16 zkSNARK proof generation complete!');
-      console.log(`   Total time: ${witnessTime}ms`);
-      console.log(`   Proof size: ~768 bytes (Groth16)`);
-      console.log(`   Anonymity set: ${this.contributorTree.contributorCount} contributors`);
+      logger.info('✅ Groth16 zkSNARK proof generation complete!');
+      logger.info(`   Proof generation: ${proofTime}ms`);
+      logger.info(`   Total time: ${proofData.totalTime}ms`);
+      logger.info(`   Proof size: ~768 bytes (Groth16 constant)`);
+      logger.info(`   Anonymity set: 1 in ${this.contributorTree.contributorCount}`);
 
       return proofData;
 
     } catch (error) {
-      console.error('❌ zkSNARK proof generation failed:', error);
-      throw new Error(`Proof generation failed: ${error.message}`);
+      const elapsed = Date.now() - startTime;
+      logger.error('❌ zkSNARK proof generation failed:', error);
+      logger.error(`   Time elapsed: ${elapsed}ms`);
+      
+      // Provide helpful error messages
+      if (error.message.includes('not loaded')) {
+        throw new Error('Setup required: Load contributor tree before generating proof');
+      } else if (error.message.includes('not found')) {
+        throw new Error('Address not registered: Register as contributor first');
+      } else if (error.message.includes('timeout')) {
+        throw new Error('Proof generation timeout: Browser may be too slow or circuit files missing');
+      } else {
+        throw new Error(`Proof generation failed: ${error.message}`);
+      }
     }
   }
 
   /**
-   * Verify proof locally before submitting (optional)
-   * Requires verification_key.json to be available
+   * Verify proof in browser before submitting (optional)
+   * ✅ FIX: Better naming (was "verifyProofLocally" but fetches from network)
    */
-  async verifyProofLocally(proof, publicSignals) {
-    if (!snarkjs) {
-      throw new Error('snarkjs not available');
-    }
-
+  async verifyProofInBrowser(proof, publicSignals) {
     try {
-      console.log('🔍 Verifying proof locally...');
+      const snarkjs = await this._ensureSnarkjs();
       
-      const vkeyResponse = await fetch('/circuits/verification_key.json');
+      logger.info('🔍 Verifying proof in browser...');
+      
+      const vkeyResponse = await fetch(this.vkeyPath);
+      if (!vkeyResponse.ok) {
+        throw new Error(`Failed to load verification key: ${vkeyResponse.status}`);
+      }
+      
       const vkey = await vkeyResponse.json();
       
       const isValid = await snarkjs.groth16.verify(vkey, publicSignals, proof);
       
       if (isValid) {
-        console.log('✅ Proof verified successfully!');
+        logger.info('✅ Proof verified successfully!');
       } else {
-        console.error('❌ Proof verification failed!');
+        logger.error('❌ Proof verification failed!');
       }
       
       return isValid;
       
     } catch (error) {
-      console.error('❌ Local verification error:', error);
-      return false;
+      logger.error('❌ Browser verification error:', error);
+      throw new Error(`Verification failed: ${error.message}`);
     }
   }
 
   /**
    * Get anonymity set information
+   * ✅ FIX: Add validation
    */
   getAnonymitySetInfo() {
     if (!this.contributorTree) {
       return null;
     }
 
+    const ageHours = parseFloat(this.contributorTree.freshness?.ageHours || 0);
+    
     return {
       size: this.contributorTree.contributorCount,
       root: this.contributorTree.root,
       lastUpdate: new Date(this.contributorTree.timestamp).toLocaleString(),
-      ageHours: parseFloat(this.contributorTree.freshness?.ageHours || 0),
-      isStale: this.contributorTree.freshness?.isStale || false
+      ageHours: ageHours,
+      isStale: ageHours > ZKSnarkProver.STALENESS_WARNING_HOURS,
+      isCriticallyStale: ageHours > ZKSnarkProver.STALENESS_ERROR_HOURS
     };
+  }
+
+  /**
+   * Enable/disable debug logging
+   */
+  setDebugLogging(enabled) {
+    logger.enabled = enabled;
   }
 }
 
 // Export singleton instance
 export const zksnarkProver = new ZKSnarkProver();
+
+// Export class for testing/custom instances
+export default ZKSnarkProver;
