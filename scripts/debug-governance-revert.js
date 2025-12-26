@@ -26,8 +26,16 @@ async function debugGovernanceRevert() {
   
   const addresses = JSON.parse(fs.readFileSync(addressesPath, 'utf8'));
   console.log('📄 Loaded contract addresses:');
-  console.log(`   Registry: ${addresses.registry}`);
-  console.log(`   Governance: ${addresses.governance}\n`);
+  console.log(`   Registry: ${addresses.PrivacyPreservingRegistry || addresses.registry}`);
+  console.log(`   Governance: ${addresses.ThresholdGovernance || addresses.governance}\n`);
+  
+  // Normalize address keys
+  if (!addresses.registry && addresses.PrivacyPreservingRegistry) {
+    addresses.registry = addresses.PrivacyPreservingRegistry;
+  }
+  if (!addresses.governance && addresses.ThresholdGovernance) {
+    addresses.governance = addresses.ThresholdGovernance;
+  }
   
   // Get signers
   const [deployer, admin1, admin2, admin3] = await ethers.getSigners();
