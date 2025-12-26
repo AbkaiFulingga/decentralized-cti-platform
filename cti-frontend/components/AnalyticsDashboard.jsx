@@ -214,7 +214,7 @@ export default function AnalyticsDashboard() {
 
   // Simple chunked query (500ms delays)
   const queryEventsInChunks = async (contract, filter, startBlock, endBlock) => {
-    const CHUNK_SIZE = 10000; // Larger chunks since we're only querying 30 days
+    const CHUNK_SIZE = 10; // ✅ FIX: Free tier RPC limit (was 10000, caused errors)
     const events = [];
     
     for (let i = startBlock; i <= endBlock; i += CHUNK_SIZE) {
@@ -222,7 +222,7 @@ export default function AnalyticsDashboard() {
       try {
         const chunkEvents = await contract.queryFilter(filter, i, chunkEnd);
         events.push(...chunkEvents);
-        // Rate limit: 500ms between chunks
+        // Rate limit: 500ms between chunks (2 req/sec safe for free tier)
         await new Promise(resolve => setTimeout(resolve, 500));
       } catch (error) {
         AppLogger.warn('Analytics', `Chunk ${i}-${chunkEnd} failed`, error);

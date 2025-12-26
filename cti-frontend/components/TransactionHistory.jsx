@@ -99,9 +99,16 @@ export default function TransactionHistory() {
           const networkProvider = new ethers.JsonRpcProvider(config.rpcUrl);
           const registry = new ethers.Contract(config.contracts.registry, registryABI, networkProvider);
           
-          // Check if user is registered on this network
-          const contributor = await registry.contributors(address);
-          const registered = contributor[5];
+          // ✅ FIX: Check if user is registered on this network (with try-catch for non-registered addresses)
+          let registered = false;
+          try {
+            const contributor = await registry.contributors(address);
+            registered = contributor[5]; // boolean at index 5
+          } catch (error) {
+            // Address not registered - contributors() reverts for non-existent keys
+            console.log(`⚠️ Not registered on ${name} (address not found), skipping`);
+            continue;
+          }
           
           if (!registered) {
             console.log(`⚠️ Not registered on ${name}, skipping`);
