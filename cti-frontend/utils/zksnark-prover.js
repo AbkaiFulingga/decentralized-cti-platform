@@ -194,9 +194,25 @@ export class ZKSnarkProver {
         throw new Error(result.error || 'API returned success=false');
       }
       
-      // ✅ FIX: Robust validation
+      // ✅ FIX: Robust validation with detailed error reporting
       if (!Validator.isValidContributorTree(result)) {
-        throw new Error('Invalid tree structure received from API');
+        // Debug: Show what's actually wrong
+        const debugInfo = {
+          hasRoot: !!result.root,
+          rootValid: Validator.isValidHexString(result.root),
+          hasContributors: !!result.contributors,
+          contributorsIsArray: Array.isArray(result.contributors),
+          contributorsLength: result.contributors?.length || 0,
+          firstContributorType: result.contributors?.[0] ? typeof result.contributors[0] : 'undefined',
+          firstContributor: result.contributors?.[0],
+          hasProofs: !!result.proofs,
+          proofsIsArray: Array.isArray(result.proofs),
+          proofsLength: result.proofs?.length || 0,
+          hasContributorCount: typeof result.contributorCount === 'number',
+          contributorCount: result.contributorCount
+        };
+        console.error('Tree validation failed. Debug info:', debugInfo);
+        throw new Error(`Invalid tree structure received from API. Debug: ${JSON.stringify(debugInfo, null, 2)}`);
       }
       
       this.contributorTree = result;
