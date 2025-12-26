@@ -131,7 +131,8 @@ export default function AnalyticsDashboard() {
     
     const registryABI = [
       "function getBatchCount() public view returns (uint256)",
-      "function getContributorCount() public view returns (uint256)",
+      // Note: getContributorCount() doesn't exist in PrivacyPreservingRegistry (uses mapping, not array)
+      // We'll count unique contributors from events instead
       "event BatchSubmitted(uint256 indexed batchIndex, address indexed submitter, string ipfsHash, bytes32 merkleRoot, uint256 timestamp)"
     ];
     
@@ -142,13 +143,11 @@ export default function AnalyticsDashboard() {
     );
     
     try {
-      // Get basic counts (fast on-chain queries)
+      // Get batch count (fast on-chain query)
       const batchCount = await registry.getBatchCount();
-      const contributorCount = await registry.getContributorCount();
       
-      AppLogger.info('Analytics', `${network.name} counts`, {
-        batches: Number(batchCount),
-        contributors: Number(contributorCount)
+      AppLogger.info('Analytics', `${network.name} batch count`, {
+        batches: Number(batchCount)
       });
       
       // Get recent batch events for heatmap (last 30 days only)
@@ -168,22 +167,37 @@ export default function AnalyticsDashboard() {
       // Query in chunks to avoid rate limits
       const events = await queryEventsInChunks(registry, filter, startBlock, currentBlock);
       
-      // Build daily submission map
+      // Build daily submission map AND count unique contributors
       const dailySubmissions = {};
+      const uniqueContributors = new Set();
+      
       for (const event of events) {
         try {
           const block = await provider.getBlock(event.blockNumber);
           const date = new Date(Number(block.timestamp) * 1000).toISOString().split('T')[0];
           dailySubmissions[date] = (dailySubmissions[date] || 0) + 1;
+          
+          // Track unique contributor addresses
+          if (event.args && event.args.submitter) {
+            uniqueContributors.add(event.args.submitter.toLowerCase());
+          }
         } catch (err) {
           // Skip blocks that fail
           continue;
         }
       }
       
+      const contributorCount = uniqueContributors.size;
+      
+      AppLogger.info('Analytics', `${network.name} stats complete`, {
+        batches: Number(batchCount),
+        contributors: contributorCount,
+        events: events.length
+      });
+      
       return {
         batchCount: Number(batchCount),
-        contributorCount: Number(contributorCount),
+        contributorCount: contributorCount,
         dailySubmissions
       };
       

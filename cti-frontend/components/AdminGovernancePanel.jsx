@@ -185,7 +185,7 @@ export default function AdminGovernancePanel() {
       ];
       
       const governanceABI = [
-        "function batchApprovals(uint256) external view returns (uint256 approvalCount, bool executed, uint256 lastVoteTime)"
+        "function getBatchApprovalStatus(uint256 batchIndex) external view returns (uint256 approvals, bool executed, uint256 createdAt)"
       ];
       
       const registry = new ethers.Contract(registryAddress, registryABI, signer);
@@ -215,10 +215,13 @@ export default function AdminGovernancePanel() {
           // Only show batches that are NOT accepted and NOT executed
           if (!batch.accepted) {
             try {
-              const approval = await governance.batchApprovals(i);
+              const approval = await governance.getBatchApprovalStatus(i);
+              
+              // approval is a tuple: [approvals, executed, createdAt]
+              const isExecuted = approval[1]; // executed field
               
               // Skip if governance has already executed this batch
-              if (approval.executed) {
+              if (isExecuted) {
                 console.log(`⏭️  Batch ${i} already executed, skipping`);
                 continue;
               }
