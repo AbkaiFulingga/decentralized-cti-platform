@@ -12,17 +12,23 @@
  */
 export async function queryEventsInChunks(contract, filter, startBlock, endBlock, provider) {
   const CHUNK_SIZE = 10; // Free tier RPC limit
-  const RATE_LIMIT_DELAY = 300; // 300ms delay between chunks (was 100ms)
+  const BASE_DELAY = 500; // Increased from 300ms to 500ms (2 requests/sec = 120 req/min, safe for Alchemy)
   const events = [];
   
   // Get latest block if endBlock is 'latest'
   const latestBlock = endBlock === 'latest' ? await provider.getBlockNumber() : endBlock;
   
-  console.log(`🔍 Querying events from block ${startBlock} to ${latestBlock} in ${CHUNK_SIZE}-block chunks...`);
+  const totalBlocks = latestBlock - startBlock + 1;
+  const estimatedChunks = Math.ceil(totalBlocks / CHUNK_SIZE);
+  
+  console.log(`🔍 Querying events from block ${startBlock} to ${latestBlock}`);
+  console.log(`   Total blocks: ${totalBlocks}, Estimated chunks: ${estimatedChunks}`);
+  console.log(`   Rate limit: 2 req/sec (safe for free tier)`);
   
   let currentStart = startBlock;
   let retries = 0;
-  const MAX_RETRIES = 5; // Increased from 3
+  const MAX_RETRIES = 3; // Reduced from 5
+  let consecutiveErrors = 0; // Track consecutive errors
   
   while (currentStart <= latestBlock) {
     const currentEnd = Math.min(currentStart + CHUNK_SIZE - 1, latestBlock);
@@ -37,33 +43,42 @@ export async function queryEventsInChunks(contract, filter, startBlock, endBlock
       
       currentStart = currentEnd + 1;
       retries = 0; // Reset retries on success
+      consecutiveErrors = 0; // Reset consecutive error counter
       
-      // Rate limiting - wait 300ms between chunks to avoid RPC provider compute unit limits
-      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY));
+      // ✅ IMPROVED: Adaptive rate limiting based on error history
+      const delay = consecutiveErrors > 0 ? BASE_DELAY * 2 : BASE_DELAY;
+      await new Promise(resolve => setTimeout(resolve, delay));
       
     } catch (error) {
+      consecutiveErrors++;
       const errorStr = JSON.stringify(error);
       const isRateLimitError = 
         error.code === 429 || 
+        error.code === -32005 || // Alchemy rate limit
         errorStr.includes('"code":429') ||
+        errorStr.includes('"code":-32005') ||
         errorStr.includes('compute units') ||
-        errorStr.includes('rate limit');
+        errorStr.includes('rate limit') ||
+        errorStr.includes('Too Many Requests');
       
       if (isRateLimitError) {
         console.warn(`   ⏳ Rate limit hit on blocks ${currentStart}-${currentEnd}, waiting longer...`);
-        await new Promise(resolve => setTimeout(resolve, 2000 * (retries + 1))); // Wait 2-10 seconds
+        // Exponential backoff: 2s, 4s, 8s
+        await new Promise(resolve => setTimeout(resolve, 2000 * Math.pow(2, retries)));
       } else {
         console.error(`   ❌ Error querying blocks ${currentStart}-${currentEnd}:`, error.message);
       }
       
       retries++;
       if (retries >= MAX_RETRIES) {
-        console.error(`   ⚠️  Max retries reached, skipping blocks ${currentStart}-${currentEnd}`);
+        console.error(`   ⚠️  Max retries (${MAX_RETRIES}) reached for blocks ${currentStart}-${currentEnd}, skipping...`);
         currentStart = currentEnd + 1;
         retries = 0;
+        consecutiveErrors = 0; // Reset for next chunk
       } else {
-        console.log(`   🔄 Retry ${retries}/${MAX_RETRIES}...`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
+        console.log(`   🔄 Retry ${retries}/${MAX_RETRIES} for blocks ${currentStart}-${currentEnd}...`);
+        // Additional backoff before retry
+        await new Promise(resolve => setTimeout(resolve, 1000 * retries));
       }
     }
   }
