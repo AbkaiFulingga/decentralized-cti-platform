@@ -41,7 +41,7 @@ async function main() {
   console.log("\n👥 Admin Addresses:");
   admins.forEach((addr, i) => console.log(`  Admin ${i+1}:`, addr));
   
-  const threshold = 2;
+  const threshold = 3; // DIRECTION1: 3/3 multi-sig (all admins must approve)
   
   // Deploy ThresholdGovernance
   console.log("\n2. Deploying ThresholdGovernance...");
@@ -50,7 +50,7 @@ async function main() {
   await governance.waitForDeployment();
   const governanceAddress = await governance.getAddress();
   console.log("✅ Governance:", governanceAddress);
-  console.log("   Threshold: 2-of-3 approvals");
+  console.log("   Threshold: 3-of-3 approvals (DIRECTION1 specification)");
   console.log("   Features: Admin rewards + Tier-aware slashing");
   
   // Deploy StorageContribution

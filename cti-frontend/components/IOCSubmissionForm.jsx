@@ -943,11 +943,11 @@ Gas used: ${receipt.gasUsed.toString()}`);
                   <button
                     type="button"
                     onClick={() => setPrivacyMode('anonymous')}
-                    disabled={!isRegistered}
+                    disabled={!isRegistered || currentNetwork?.chainId !== 421614}
                     className={`p-4 rounded-xl border-2 transition-all ${
                       privacyMode === 'anonymous'
                         ? 'border-purple-500 bg-purple-500/20'
-                        : !isRegistered 
+                        : (!isRegistered || currentNetwork?.chainId !== 421614) 
                         ? 'border-gray-700 bg-gray-900/20 opacity-50 cursor-not-allowed'
                         : 'border-gray-600 bg-gray-900/30 hover:border-gray-500'
                     }`}
@@ -956,7 +956,7 @@ Gas used: ${receipt.gasUsed.toString()}`);
                       <span className="text-3xl block mb-2">�</span>
                       <p className="text-white font-bold mb-1">Anonymous (zkSNARK)</p>
                       <p className="text-gray-400 text-xs">
-                        {!isRegistered ? 'Register first to unlock' : 'Groth16 proof generated in browser'}
+                        {!isRegistered ? 'Register first to unlock' : currentNetwork?.chainId !== 421614 ? 'Switch to Arbitrum L2 (affordable gas)' : 'Groth16 proof generated in browser'}
                       </p>
                     </div>
                   </button>
