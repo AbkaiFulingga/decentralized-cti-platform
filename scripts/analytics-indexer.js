@@ -137,7 +137,7 @@ class AnalyticsIndexer {
 
       // Connect to provider
       const provider = new ethers.JsonRpcProvider(network.rpcUrl);
-      const registry = new ethers.Contract(addresses.registry, REGISTRY_ABI, provider);
+      const registry = new ethers.Contract(addresses.PrivacyPreservingRegistry, REGISTRY_ABI, provider);
 
       // Get current block
       const currentBlock = await provider.getBlockNumber();
