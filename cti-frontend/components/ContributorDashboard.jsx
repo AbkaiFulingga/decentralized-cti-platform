@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS, STAKING_TIERS } from '../utils/constants';
-import { smartQueryEvents } from '../utils/infura-helpers';
+import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function ContributorDashboard() {
   const [walletConnected, setWalletConnected] = useState(false);
@@ -232,8 +232,14 @@ export default function ContributorDashboard() {
       // Fetch BatchAdded events to get CIDs (using smart chunked queries from deployment block)
       console.log('   🔎 Fetching BatchAdded events...');
       const filter = registry.filters.BatchAdded();
-      const startBlock = currentNetwork.deploymentBlock || 0;
-      const events = await smartQueryEvents(registry, filter, startBlock, 'latest', provider);
+      const latestBlock = await provider.getBlockNumber();
+      const blocksBack = currentNetwork.chainId === 11155111 ? 50_000 : 2_000_000;
+      const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+      const startBlock = Math.max(currentNetwork.deploymentBlock || 0, recentStartBlock);
+      const events = await smartQueryEvents(registry, filter, startBlock, latestBlock, provider, {
+        deploymentBlock: currentNetwork.deploymentBlock,
+        ...getEventQueryDefaults(currentNetwork)
+      });
       console.log(`   ✅ Fetched ${events.length} events (from block ${startBlock})`);
       
       const cidMap = {};
@@ -264,7 +270,7 @@ export default function ContributorDashboard() {
           
           // Check if this batch belongs to the current user
           if (batch.contributorHash === addressHash || batch.isPublic) {
-            await new Promise(resolve => setTimeout(resolve, 300));
+            // Avoid long serial sleeps; IPFS fetch is the actual bottleneck.
             
             const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
             const result = await response.json();

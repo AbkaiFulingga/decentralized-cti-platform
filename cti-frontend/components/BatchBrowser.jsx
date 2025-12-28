@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
 import { IOCEncryption } from '../utils/encryption';
-import { smartQueryEvents } from '../utils/infura-helpers';
+import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function BatchBrowser() {
   const [batches, setBatches] = useState([]);
@@ -129,10 +129,24 @@ export default function BatchBrowser() {
       const batchAddedFilter = registry.filters.BatchAdded();
       const batchZKFilter = registry.filters.BatchAddedWithZKProof();
       
-      const startBlock = network.deploymentBlock || 0;
+      const latestBlock = await provider.getBlockNumber();
+
+      // Don't scan from 0 on every page load. Start from deployment block, but never earlier
+      // than a recent window. This keeps Sepolia usable under free-tier eth_getLogs limits.
+      const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
+      const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+      const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
+
+      const eventQueryDefaults = getEventQueryDefaults(network);
       const [batchAddedEvents, batchZKEvents] = await Promise.all([
-        smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', provider),
-        smartQueryEvents(registry, batchZKFilter, startBlock, 'latest', provider)
+        smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
+          deploymentBlock: network.deploymentBlock,
+          ...eventQueryDefaults
+        }),
+        smartQueryEvents(registry, batchZKFilter, startBlock, latestBlock, provider, {
+          deploymentBlock: network.deploymentBlock,
+          ...eventQueryDefaults
+        })
       ]);
       console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name} (from block ${startBlock})`);
       
@@ -152,8 +166,6 @@ export default function BatchBrowser() {
       for (let i = 0; i < count; i++) {
         try {
           const batch = await registry.getBatch(i);
-          
-          await new Promise(resolve => setTimeout(resolve, 500));
           
           // Get CID from event map
           const cid = cidMap[i];

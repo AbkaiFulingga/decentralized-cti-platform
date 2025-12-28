@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
-import { smartQueryEvents } from '../utils/infura-helpers';
+import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function AdminGovernancePanel() {
   const [pendingBatches, setPendingBatches] = useState([]);
@@ -197,8 +197,14 @@ export default function AdminGovernancePanel() {
       // Query events to get CIDs with smart chunked queries (from deployment block)
       console.log('Fetching BatchAdded events...');
       const batchAddedFilter = registry.filters.BatchAdded();
-      const startBlock = currentNetwork.deploymentBlock || 0;
-      const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', provider);
+      const latestBlock = await provider.getBlockNumber();
+      const blocksBack = currentNetwork.chainId === 11155111 ? 50_000 : 2_000_000;
+      const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+      const startBlock = Math.max(currentNetwork.deploymentBlock || 0, recentStartBlock);
+      const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
+        deploymentBlock: currentNetwork.deploymentBlock,
+        ...getEventQueryDefaults(currentNetwork)
+      });
       
       const cidMap = {};
       events.forEach(event => {
@@ -230,8 +236,6 @@ export default function AdminGovernancePanel() {
               console.warn(`Could not check governance status for batch ${i}:`, govError.message);
               // Continue anyway if governance check fails
             }
-            
-            await new Promise(resolve => setTimeout(resolve, 500));
             
             const cid = cidMap[i];
             

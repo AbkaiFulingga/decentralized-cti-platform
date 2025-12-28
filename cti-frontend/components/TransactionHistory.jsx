@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { NETWORKS } from '../utils/constants';
-import { smartQueryEvents } from '../utils/infura-helpers';
+import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function TransactionHistory() {
   const [transactions, setTransactions] = useState([]);
@@ -120,8 +120,14 @@ export default function TransactionHistory() {
           
           // Query events to get CIDs with smart chunked queries (from deployment block)
           const batchAddedFilter = registry.filters.BatchAdded();
-          const startBlock = config.deploymentBlock || 0;
-          const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, 'latest', networkProvider);
+          const latestBlock = await networkProvider.getBlockNumber();
+          const blocksBack = config.chainId === 11155111 ? 50_000 : 2_000_000;
+          const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+          const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
+          const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, networkProvider, {
+            deploymentBlock: config.deploymentBlock,
+            ...getEventQueryDefaults(config)
+          });
           console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events (from block ${startBlock})`);
       
           const cidMap = {};

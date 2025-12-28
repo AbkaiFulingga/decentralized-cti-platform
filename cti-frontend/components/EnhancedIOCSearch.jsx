@@ -6,7 +6,7 @@ import { ethers } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
 import { NETWORKS } from '../utils/constants';
-import { smartQueryEvents } from '../utils/infura-helpers';
+import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function EnhancedIOCSearch() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -118,8 +118,14 @@ export default function EnhancedIOCSearch() {
       // Start from deployment block to avoid scanning millions of empty blocks
       console.log(`🔎 [${network.name}] Fetching BatchAdded events...`);
       const filter = registry.filters.BatchAdded();
-      const startBlock = network.deploymentBlock || 0;
-      const events = await smartQueryEvents(registry, filter, startBlock, 'latest', provider);
+      const latestBlock = await provider.getBlockNumber();
+      const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
+      const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+      const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
+      const events = await smartQueryEvents(registry, filter, startBlock, latestBlock, provider, {
+        deploymentBlock: network.deploymentBlock,
+        ...getEventQueryDefaults(network)
+      });
       console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
       
       const cidMap = {};
