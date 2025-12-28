@@ -138,28 +138,48 @@ export default function BatchBrowser() {
       const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
 
       const eventQueryDefaults = getEventQueryDefaults(network);
-      const [batchAddedEvents, batchZKEvents] = await Promise.all([
-        smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
-          deploymentBlock: network.deploymentBlock,
-          ...eventQueryDefaults
-        }),
-        smartQueryEvents(registry, batchZKFilter, startBlock, latestBlock, provider, {
-          deploymentBlock: network.deploymentBlock,
-          ...eventQueryDefaults
-        })
-      ]);
-      console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name} (from block ${startBlock})`);
+      // Prefer server-side CID map cache to avoid hammering Alchemy from every browser session.
+      let cidMap = {};
+      try {
+        const params = new URLSearchParams({
+          chainId: String(network.chainId),
+          rpcUrl: network.rpcUrl,
+          registry: registryAddress,
+          deploymentBlock: String(network.deploymentBlock || 0),
+          // Per-request scan cap; API caches incrementally across requests.
+          maxBlocks: network.chainId === 11155111 ? '200000' : '2000000'
+        });
+        const resp = await fetch(`/api/cid-map?${params.toString()}`);
+        const json = await resp.json();
+        if (json?.success && json?.cidMap) {
+          cidMap = json.cidMap;
+          console.log(`✅ Loaded CID map from server cache for ${network.name}`, json.meta);
+        } else {
+          throw new Error(json?.error || 'cid-map fetch failed');
+        }
+      } catch (e) {
+        console.warn(`⚠️ CID cache unavailable for ${network.name}, falling back to live event scan:`, e?.message || e);
+
+        const [batchAddedEvents, batchZKEvents] = await Promise.all([
+          smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
+            deploymentBlock: network.deploymentBlock,
+            ...eventQueryDefaults
+          }),
+          smartQueryEvents(registry, batchZKFilter, startBlock, latestBlock, provider, {
+            deploymentBlock: network.deploymentBlock,
+            ...eventQueryDefaults
+          })
+        ]);
+        console.log(`✅ Fetched ${batchAddedEvents.length + batchZKEvents.length} events from ${network.name} (from block ${startBlock})`);
+
+        const allEvents = [...batchAddedEvents, ...batchZKEvents];
+        allEvents.forEach((event) => {
+          const batchIndex = Number(event.args.index);
+          cidMap[batchIndex] = event.args.cid;
+        });
+      }
       
-      // Combine and sort events by batch index
-      const allEvents = [...batchAddedEvents, ...batchZKEvents];
-      const cidMap = {};
-      allEvents.forEach((event, idx) => {
-        const batchIndex = Number(event.args.index);
-        cidMap[batchIndex] = event.args.cid;
-        console.log(`📦 Event ${idx}: Batch #${batchIndex} → CID: ${event.args.cid}`);
-      });
-      
-      console.log(`✅ Found ${Object.keys(cidMap).length} CIDs from events for ${network.name}`, cidMap);
+  console.log(`✅ Found ${Object.keys(cidMap).length} CIDs for ${network.name}`);
       
       const batchesData = [];
       

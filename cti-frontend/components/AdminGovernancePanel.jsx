@@ -201,16 +201,34 @@ export default function AdminGovernancePanel() {
       const blocksBack = currentNetwork.chainId === 11155111 ? 50_000 : 2_000_000;
       const recentStartBlock = Math.max(0, latestBlock - blocksBack);
       const startBlock = Math.max(currentNetwork.deploymentBlock || 0, recentStartBlock);
-      const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
-        deploymentBlock: currentNetwork.deploymentBlock,
-        ...getEventQueryDefaults(currentNetwork)
-      });
-      
-      const cidMap = {};
-      events.forEach(event => {
-        cidMap[Number(event.args.index)] = event.args.cid;
-      });
-      console.log(`Retrieved ${events.length} events (from block ${startBlock})`);
+      let cidMap = {};
+      try {
+        const params = new URLSearchParams({
+          chainId: String(currentNetwork.chainId),
+          rpcUrl: currentNetwork.rpcUrl,
+          registry: registryAddress,
+          deploymentBlock: String(currentNetwork.deploymentBlock || 0),
+          maxBlocks: currentNetwork.chainId === 11155111 ? '200000' : '2000000'
+        });
+        const resp = await fetch(`/api/cid-map?${params.toString()}`);
+        const json = await resp.json();
+        if (json?.success && json?.cidMap) {
+          cidMap = json.cidMap;
+          console.log(`✅ Loaded CID map from server cache`, json.meta);
+        } else {
+          throw new Error(json?.error || 'cid-map fetch failed');
+        }
+      } catch (e) {
+        console.warn(`⚠️ CID cache unavailable, falling back to live event scan:`, e?.message || e);
+        const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, provider, {
+          deploymentBlock: currentNetwork.deploymentBlock,
+          ...getEventQueryDefaults(currentNetwork)
+        });
+        events.forEach(event => {
+          cidMap[Number(event.args.index)] = event.args.cid;
+        });
+        console.log(`Retrieved ${events.length} events (from block ${startBlock})`);
+      }
       
       const pending = [];
       
