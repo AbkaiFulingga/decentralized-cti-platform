@@ -79,7 +79,6 @@ export default function TransactionHistory() {
       console.log(`📊 Fetching transaction history from BOTH networks for ${address.slice(0, 6)}...${address.slice(-4)}`);
       
       const registryABI = [
-        "function contributors(address) external view returns (uint256, uint256, uint256, uint256, uint256, bool, uint256)",
         "function getBatchCount() public view returns (uint256)",
         "function getBatch(uint256) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
@@ -98,45 +97,45 @@ export default function TransactionHistory() {
           console.log(`� Querying ${name}...`);
           const networkProvider = new ethers.JsonRpcProvider(config.rpcUrl);
           const registry = new ethers.Contract(config.contracts.registry, registryABI, networkProvider);
-          
-          // ✅ FIX: Check if user is registered on this network (with try-catch for non-registered addresses)
-          let registered = false;
-          try {
-            const contributor = await registry.contributors(address);
-            registered = contributor[5]; // boolean at index 5
-          } catch (error) {
-            // Address not registered - contributors() reverts for non-existent keys
-            console.log(`⚠️ Not registered on ${name} (address not found), skipping`);
-            continue;
-          }
-          
-          if (!registered) {
-            console.log(`⚠️ Not registered on ${name}, skipping`);
-            continue;
-          }
 
           const batchCount = await registry.getBatchCount();
           console.log(`📦 ${name}: ${batchCount} total batches`);
-          
-          // Query events to get CIDs with smart chunked queries (from deployment block)
-          const batchAddedFilter = registry.filters.BatchAdded();
-          const latestBlock = await networkProvider.getBlockNumber();
-          const blocksBack = config.chainId === 11155111 ? 50_000 : 2_000_000;
-          const recentStartBlock = Math.max(0, latestBlock - blocksBack);
-          const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
-          const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, networkProvider, {
-            deploymentBlock: config.deploymentBlock,
-            ...getEventQueryDefaults(config)
-          });
-          console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events (from block ${startBlock})`);
-      
-          const cidMap = {};
-          events.forEach(event => {
-            const batchIndex = Number(event.args.index);
-            cidMap[batchIndex] = event.args.cid;
-          });
+
+          // Fetch CID map from server-side cache first (much faster on Alchemy Sepolia);
+          // fall back to client-side log scan only if needed.
+          let cidMap = {};
+          try {
+            const res = await fetch(`/api/cid-map?chainId=${config.chainId}`);
+            const data = await res.json();
+            if (data?.success && data?.cidMap) {
+              cidMap = data.cidMap;
+              console.log(`✅ ${name}: Loaded ${Object.keys(cidMap).length} CIDs from /api/cid-map`);
+            }
+          } catch (e) {
+            console.log(`⚠️ ${name}: /api/cid-map unavailable, falling back to log scan`);
+          }
+
+          if (Object.keys(cidMap).length === 0) {
+            const batchAddedFilter = registry.filters.BatchAdded();
+            const latestBlock = await networkProvider.getBlockNumber();
+            const blocksBack = config.chainId === 11155111 ? 50_000 : 2_000_000;
+            const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+            const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
+            const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, networkProvider, {
+              deploymentBlock: config.deploymentBlock,
+              ...getEventQueryDefaults(config)
+            });
+            console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events (from block ${startBlock})`);
+
+            cidMap = {};
+            events.forEach(event => {
+              const batchIndex = Number(event.args.index);
+              cidMap[batchIndex] = event.args.cid;
+            });
+          }
       
           // Filter batches submitted by this user
+          let foundAnyOnNetwork = false;
           for (let i = 0; i < Number(batchCount); i++) {
             const batch = await registry.getBatch(i);
             const contributorHash = batch.contributorHash;
@@ -145,6 +144,7 @@ export default function TransactionHistory() {
             if (isPublic) {
               const submitterAddress = '0x' + contributorHash.slice(26);
               if (submitterAddress.toLowerCase() === address.toLowerCase()) {
+                foundAnyOnNetwork = true;
                 
                 let iocCount = '?';
                 const cid = cidMap[i];
@@ -182,6 +182,10 @@ export default function TransactionHistory() {
                 console.log(`✅ Found user batch #${i} on ${name}: ${iocCount} IOCs, ${batch.accepted ? 'Accepted' : 'Pending'}`);
               }
             }
+          }
+
+          if (!foundAnyOnNetwork) {
+            console.log(`ℹ️ No public batches found for user on ${name}`);
           }
         } catch (networkError) {
           console.error(`❌ Error querying ${name}:`, networkError.message);
