@@ -34,7 +34,7 @@ const NETWORKS = {
 const CACHE_DIR = path.join(__dirname, '../cti-frontend/public/cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'analytics-cache.json');
 const UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const HISTORY_DAYS = 7; // Last 7 days for heatmap
+const HISTORY_DAYS = 3; // Last 3 days for heatmap (RPC compliance)
 
 // Registry ABI (only events we need)
 const REGISTRY_ABI = [
@@ -148,8 +148,8 @@ class AnalyticsIndexer {
 
       console.log(`   Querying blocks ${fromBlock} to ${currentBlock} (${currentBlock - fromBlock} blocks)`);
 
-      // Query events in chunks to avoid rate limits
-      const CHUNK_SIZE = 10000; // Query 10k blocks at a time
+      // Query events in chunks to avoid rate limits (10 blocks for Alchemy free tier)
+      const CHUNK_SIZE = 10; // Free tier limit
       const events = [];
       
       for (let start = fromBlock; start <= currentBlock; start += CHUNK_SIZE) {
@@ -160,8 +160,8 @@ class AnalyticsIndexer {
         const chunkEvents = await registry.queryFilter(filter, start, end);
         events.push(...chunkEvents);
         
-        // Rate limit protection
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Rate limit protection (1 request per second)
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
       console.log(`   Found ${events.length} BatchSubmitted events`);
