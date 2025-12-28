@@ -85,6 +85,7 @@ export default function NavBar() {
               👤 Dashboard
             </Link>
 
+            {/* Analytics temporarily disabled due to free-tier RPC limitations 
             <Link
               href="/statistics"
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -95,6 +96,7 @@ export default function NavBar() {
             >
               📊 Analytics
             </Link>
+            */}
   
             <Link
               href="/submit"
