@@ -146,8 +146,11 @@ export default function BatchBrowser() {
           rpcUrl: network.rpcUrl,
           registry: registryAddress,
           deploymentBlock: String(network.deploymentBlock || 0),
-          // Per-request scan cap; API caches incrementally across requests.
-          maxBlocks: network.chainId === 11155111 ? '200000' : '2000000'
+          // Per-request scan cap; keep tiny so this endpoint returns fast.
+          // The server caches progress and can be called again as needed.
+          maxBlocks: network.chainId === 11155111 ? '2000' : '20000',
+          // Return cached map immediately if present.
+          allowStale: '1'
         });
         const resp = await fetch(`/api/cid-map?${params.toString()}`);
         const json = await resp.json();

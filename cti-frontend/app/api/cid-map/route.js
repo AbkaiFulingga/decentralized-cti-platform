@@ -44,6 +44,7 @@ async function sleep(ms) {
 }
 
 export async function GET(request) {
+  const t0 = Date.now();
   const { searchParams } = new URL(request.url);
 
   const chainId = Number(searchParams.get('chainId'));
@@ -52,18 +53,50 @@ export async function GET(request) {
   const deploymentBlock = Number(searchParams.get('deploymentBlock') || 0);
 
   // Optional controls
-  const maxBlocks = Number(searchParams.get('maxBlocks') || 200_000); // cap per request
+  // Keep this small by default to prevent multi-minute requests on Alchemy.
+  // Callers can refresh repeatedly; we keep progress in-memory via lastScannedBlock.
+  const maxBlocks = Number(searchParams.get('maxBlocks') || 2_000); // cap per request
   const force = searchParams.get('force') === '1';
 
-  if (!chainId || !rpcUrl || !registryAddress) {
+  // Quick mode: if we already have a cache entry for this chainId+registry,
+  // return it without requiring rpcUrl. Useful for pages that just want whatever
+  // the server already knows right now.
+  const allowStale = searchParams.get('allowStale') === '1';
+    const cacheKey = getCacheKey(chainId, registryAddress);
+    const existing = CACHE.maps.get(cacheKey);
+
+  if (!chainId || !registryAddress) {
     return NextResponse.json({
       success: false,
-      error: 'Required query params: chainId, rpcUrl, registry'
+      error: 'Required query params: chainId, registry'
     }, { status: 400 });
   }
 
-  const cacheKey = getCacheKey(chainId, registryAddress);
-  const existing = CACHE.maps.get(cacheKey);
+  // If we have something cached and the caller is OK with potentially stale data,
+  // return immediately (even without rpcUrl).
+  if (allowStale && existing) {
+    return NextResponse.json({
+      success: true,
+      cached: true,
+      stale: !isFresh(existing),
+      cidMap: existing.cidMap,
+      meta: {
+        lastScannedBlock: existing.lastScannedBlock,
+        latestKnownBlock: existing.latestKnownBlock,
+        updatedAt: existing.updatedAt,
+        elapsedMs: Date.now() - t0,
+        note: 'Returned cached cidMap only (allowStale=1).'
+      }
+    });
+  }
+
+  // Past this point we need an RPC URL to make progress.
+  if (!rpcUrl) {
+    return NextResponse.json({
+      success: false,
+      error: 'Missing rpcUrl. Provide rpcUrl or call with allowStale=1 to return cached data only.'
+    }, { status: 400 });
+  }
   if (!force && isFresh(existing)) {
     return NextResponse.json({
       success: true,
@@ -72,7 +105,8 @@ export async function GET(request) {
       meta: {
         lastScannedBlock: existing.lastScannedBlock,
         latestKnownBlock: existing.latestKnownBlock,
-        updatedAt: existing.updatedAt
+        updatedAt: existing.updatedAt,
+        elapsedMs: Date.now() - t0
       }
     });
   }
@@ -169,6 +203,7 @@ export async function GET(request) {
       windows,
       eventsFound,
       rateLimited
+      ,elapsedMs: Date.now() - t0
     }
   });
 }

@@ -208,7 +208,8 @@ export default function AdminGovernancePanel() {
           rpcUrl: currentNetwork.rpcUrl,
           registry: registryAddress,
           deploymentBlock: String(currentNetwork.deploymentBlock || 0),
-          maxBlocks: currentNetwork.chainId === 11155111 ? '200000' : '2000000'
+          maxBlocks: currentNetwork.chainId === 11155111 ? '2000' : '20000',
+          allowStale: '1'
         });
         const resp = await fetch(`/api/cid-map?${params.toString()}`);
         const json = await resp.json();

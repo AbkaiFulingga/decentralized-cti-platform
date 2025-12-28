@@ -79,6 +79,9 @@ export default function TransactionHistory() {
       console.log(`📊 Fetching transaction history from BOTH networks for ${address.slice(0, 6)}...${address.slice(-4)}`);
       
       const registryABI = [
+        // PrivacyPreservingRegistry: contributors(address) -> Contributor struct
+        // (submissionCount, acceptedSubmissions, reputationScore, totalStaked, tier, isActive, joinedAt)
+        "function contributors(address) external view returns (uint256 submissionCount, uint256 acceptedSubmissions, uint256 reputationScore, uint256 totalStaked, uint256 tier, bool isActive, uint256 joinedAt)",
         "function getBatchCount() public view returns (uint256)",
         "function getBatch(uint256) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
@@ -94,48 +97,67 @@ export default function TransactionHistory() {
 
       for (const { name, config } of networksToQuery) {
         try {
-          console.log(`� Querying ${name}...`);
+          console.log(`🌐 Querying ${name}...`);
           const networkProvider = new ethers.JsonRpcProvider(config.rpcUrl);
           const registry = new ethers.Contract(config.contracts.registry, registryABI, networkProvider);
+          
+          // Check if user is registered on this network.
+          // For PrivacyPreservingRegistry this should NOT revert; unregistered means isActive=false.
+          let isActive = false;
+          try {
+            const contributor = await registry.contributors(address);
+            isActive = Boolean(contributor?.isActive ?? contributor?.[5]);
+            console.log(`👤 ${name}: contributor isActive=${isActive}`);
+          } catch (error) {
+            console.warn(`⚠️ ${name}: contributors(address) call failed; skipping this network`, error?.message || error);
+            continue;
+          }
+
+          if (!isActive) {
+            console.log(`ℹ️ Not registered on ${name}, skipping`);
+            continue;
+          }
 
           const batchCount = await registry.getBatchCount();
           console.log(`📦 ${name}: ${batchCount} total batches`);
-
-          // Fetch CID map from server-side cache first (much faster on Alchemy Sepolia);
-          // fall back to client-side log scan only if needed.
+          
+          // Query events to get CIDs with smart chunked queries (from deployment block)
+          const batchAddedFilter = registry.filters.BatchAdded();
+          const latestBlock = await networkProvider.getBlockNumber();
+          const blocksBack = config.chainId === 11155111 ? 50_000 : 2_000_000;
+          const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+          const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
           let cidMap = {};
           try {
-            const res = await fetch(`/api/cid-map?chainId=${config.chainId}`);
-            const data = await res.json();
-            if (data?.success && data?.cidMap) {
-              cidMap = data.cidMap;
-              console.log(`✅ ${name}: Loaded ${Object.keys(cidMap).length} CIDs from /api/cid-map`);
+            const params = new URLSearchParams({
+              chainId: String(config.chainId),
+              rpcUrl: config.rpcUrl,
+              registry: config.contracts.registry,
+              deploymentBlock: String(config.deploymentBlock || 0),
+              maxBlocks: config.chainId === 11155111 ? '2000' : '20000',
+              allowStale: '1'
+            });
+            const resp = await fetch(`/api/cid-map?${params.toString()}`);
+            const json = await resp.json();
+            if (json?.success && json?.cidMap) {
+              cidMap = json.cidMap;
+              console.log(`🗺️ ${name}: Loaded CID map from server cache`, json?.meta);
+            } else {
+              throw new Error(json?.error || 'cid-map fetch failed');
             }
           } catch (e) {
-            console.log(`⚠️ ${name}: /api/cid-map unavailable, falling back to log scan`);
-          }
-
-          if (Object.keys(cidMap).length === 0) {
-            const batchAddedFilter = registry.filters.BatchAdded();
-            const latestBlock = await networkProvider.getBlockNumber();
-            const blocksBack = config.chainId === 11155111 ? 50_000 : 2_000_000;
-            const recentStartBlock = Math.max(0, latestBlock - blocksBack);
-            const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
+            console.warn(`⚠️ ${name}: CID cache unavailable, falling back to live event scan`, e?.message || e);
             const events = await smartQueryEvents(registry, batchAddedFilter, startBlock, latestBlock, networkProvider, {
               deploymentBlock: config.deploymentBlock,
               ...getEventQueryDefaults(config)
             });
             console.log(`✅ ${name}: Fetched ${events.length} BatchAdded events (from block ${startBlock})`);
-
-            cidMap = {};
             events.forEach(event => {
-              const batchIndex = Number(event.args.index);
-              cidMap[batchIndex] = event.args.cid;
+              cidMap[Number(event.args.index)] = event.args.cid;
             });
           }
       
           // Filter batches submitted by this user
-          let foundAnyOnNetwork = false;
           for (let i = 0; i < Number(batchCount); i++) {
             const batch = await registry.getBatch(i);
             const contributorHash = batch.contributorHash;
@@ -144,7 +166,6 @@ export default function TransactionHistory() {
             if (isPublic) {
               const submitterAddress = '0x' + contributorHash.slice(26);
               if (submitterAddress.toLowerCase() === address.toLowerCase()) {
-                foundAnyOnNetwork = true;
                 
                 let iocCount = '?';
                 const cid = cidMap[i];
@@ -183,12 +204,8 @@ export default function TransactionHistory() {
               }
             }
           }
-
-          if (!foundAnyOnNetwork) {
-            console.log(`ℹ️ No public batches found for user on ${name}`);
-          }
         } catch (networkError) {
-          console.error(`❌ Error querying ${name}:`, networkError.message);
+          console.error(`❌ Error querying ${name}:`, networkError?.message || networkError);
           // Continue to next network instead of failing completely
         }
       }
