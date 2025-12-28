@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deployment script for Analytics Indexer on production server
-# Run this on: user@192.168.1.11
+# Run this on: sc@192.168.1.11
 
 set -e  # Exit on error
 
@@ -9,14 +9,14 @@ echo ""
 
 # Step 1: Pull latest code
 echo "📥 Step 1/6: Pulling latest code from GitHub..."
-cd /home/user/decentralized-cti-platform-3
+cd /home/sc/blockchain-dev
 git pull origin main
 echo "✅ Code updated to latest commit"
 echo ""
 
 # Step 2: Create cache directory
 echo "📁 Step 2/6: Creating cache directory..."
-mkdir -p /home/user/decentralized-cti-platform-3/cti-frontend/public/cache
+mkdir -p /home/sc/blockchain-dev/cti-frontend/public/cache
 echo "✅ Cache directory ready"
 echo ""
 
@@ -27,7 +27,7 @@ if pm2 describe analytics-indexer > /dev/null 2>&1; then
   pm2 restart analytics-indexer
 else
   echo "🆕 Starting new indexer..."
-  cd /home/user/decentralized-cti-platform-3
+  cd /home/sc/blockchain-dev
   pm2 start scripts/analytics-indexer.js --name analytics-indexer
 fi
 echo "✅ Indexer process configured"
@@ -40,7 +40,7 @@ echo ""
 
 # Step 5: Verify cache file was created
 echo "🔍 Step 5/6: Verifying cache file..."
-CACHE_FILE="/home/user/decentralized-cti-platform-3/cti-frontend/public/cache/analytics-cache.json"
+CACHE_FILE="/home/sc/blockchain-dev/cti-frontend/public/cache/analytics-cache.json"
 if [ -f "$CACHE_FILE" ]; then
   echo "✅ Cache file created successfully"
   echo "   Size: $(du -h $CACHE_FILE | cut -f1)"
@@ -53,7 +53,7 @@ echo ""
 
 # Step 6: Restart Next.js
 echo "🔄 Step 6/6: Restarting Next.js application..."
-cd /home/user/decentralized-cti-platform-3/cti-frontend
+cd /home/sc/blockchain-dev/cti-frontend
 pm2 restart nextjs-dev
 echo "✅ Next.js restarted"
 echo ""

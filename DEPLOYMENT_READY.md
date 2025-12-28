@@ -44,10 +44,10 @@ All code committed and pushed to GitHub:
 
 ```bash
 # 1. SSH to your server
-ssh user@192.168.1.11
+ssh sc@192.168.1.11
 
 # 2. Run the deployment script
-bash /home/user/decentralized-cti-platform-3/scripts/deploy-analytics-indexer.sh
+bash /home/sc/blockchain-dev/scripts/deploy-analytics-indexer.sh
 ```
 
 That's it! The script handles everything automatically.

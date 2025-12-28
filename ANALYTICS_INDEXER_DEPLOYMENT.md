@@ -16,10 +16,10 @@
 
 ```bash
 # On your local machine
-ssh user@192.168.1.11
+ssh sc@192.168.1.11
 
 # Copy and run this single command
-bash /home/user/decentralized-cti-platform-3/scripts/deploy-analytics-indexer.sh
+bash /home/sc/blockchain-dev/scripts/deploy-analytics-indexer.sh
 ```
 
 The script will:
@@ -37,10 +37,10 @@ The script will:
 
 ```bash
 # 1. SSH to server
-ssh user@192.168.1.11
+ssh sc@192.168.1.11
 
 # 2. Navigate to project
-cd /home/user/decentralized-cti-platform-3
+cd /home/sc/blockchain-dev
 
 # 3. Pull latest code
 git pull origin main

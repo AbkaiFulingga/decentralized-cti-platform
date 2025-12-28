@@ -4,12 +4,12 @@
 
 ### 1. SSH to your server
 ```bash
-ssh user@192.168.1.11
+ssh sc@192.168.1.11
 ```
 
 ### 2. Run the automated deployment script
 ```bash
-bash /home/user/decentralized-cti-platform-3/scripts/deploy-analytics-indexer.sh
+bash /home/sc/blockchain-dev/scripts/deploy-analytics-indexer.sh
 ```
 
 That's it! The script will handle everything automatically.
