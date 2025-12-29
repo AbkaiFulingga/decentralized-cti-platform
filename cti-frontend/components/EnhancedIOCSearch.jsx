@@ -104,7 +104,16 @@ export default function EnhancedIOCSearch() {
       ];
       
       const registry = new ethers.Contract(network.contracts.registry, registryABI, provider);
-      const count = await registry.getBatchCount();
+      let count;
+      try {
+        count = await registry.getBatchCount();
+      } catch (e) {
+        console.error(`❌ [${network.name}] getBatchCount() failed (ABI mismatch or wrong contract address?)`, {
+          error: e?.message || e,
+          address: network.contracts.registry
+        });
+        return [];
+      }
       const countNum = Number(count);
       
       console.log(`📊 [${network.name}] Found ${countNum} batches`);
@@ -114,27 +123,42 @@ export default function EnhancedIOCSearch() {
         return [];
       }
       
-      // Fetch all BatchAdded events to get actual CIDs with smart chunked queries
-      // Start from deployment block to avoid scanning millions of empty blocks
-      console.log(`🔎 [${network.name}] Fetching BatchAdded events...`);
-      const filter = registry.filters.BatchAdded();
-      const latestBlock = await provider.getBlockNumber();
-      const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
-      const recentStartBlock = Math.max(0, latestBlock - blocksBack);
-      const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
-      const events = await smartQueryEvents(registry, filter, startBlock, latestBlock, provider, {
-        deploymentBlock: network.deploymentBlock,
-        ...getEventQueryDefaults(network)
-      });
-      console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
-      
-      const cidMap = {};
-      events.forEach(event => {
-        const batchIndex = Number(event.args.index);
-        const cid = event.args.cid;
-        cidMap[batchIndex] = cid;
-        console.log(`   📦 Batch ${batchIndex}: ${cid}`);
-      });
+      // Prefer server-side CID cache to avoid heavy/fragile eth_getLogs scans on Sepolia.
+      console.log(`🗺️  [${network.name}] Loading CID map from server cache...`);
+      let cidMap = {};
+      try {
+        const params = new URLSearchParams({
+          chainId: String(network.chainId),
+          rpcUrl: network.rpcUrl,
+          registry: network.contracts.registry,
+          deploymentBlock: String(network.deploymentBlock || 0),
+          maxBlocks: network.chainId === 11155111 ? '2000' : '20000',
+          allowStale: '1'
+        });
+        const resp = await fetch(`/api/cid-map?${params.toString()}`);
+        const json = await resp.json();
+        if (json?.success && json?.cidMap) {
+          cidMap = json.cidMap;
+          console.log(`✅ [${network.name}] CID map loaded`, json?.meta);
+        } else {
+          throw new Error(json?.error || 'cid-map fetch failed');
+        }
+      } catch (e) {
+        console.warn(`⚠️  [${network.name}] CID cache unavailable; falling back to live event scan`, e?.message || e);
+        const filter = registry.filters.BatchAdded();
+        const latestBlock = await provider.getBlockNumber();
+        const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
+        const recentStartBlock = Math.max(0, latestBlock - blocksBack);
+        const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
+        const events = await smartQueryEvents(registry, filter, startBlock, latestBlock, provider, {
+          deploymentBlock: network.deploymentBlock,
+          ...getEventQueryDefaults(network)
+        });
+        console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
+        events.forEach(event => {
+          cidMap[Number(event.args.index)] = event.args.cid;
+        });
+      }
       
       // Limit to last 100 batches for demo responsiveness (implicit limit, no UI text)
       const batchLimit = Math.min(100, countNum);
