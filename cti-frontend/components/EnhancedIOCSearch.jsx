@@ -202,25 +202,31 @@ export default function EnhancedIOCSearch() {
             falsePositives: Number(batch.falsePositives)
           });
           
-          const cid = cidMap[i];
+          // cidMap comes from JSON so keys might be strings; check both forms.
+          const cid = cidMap[i] || cidMap[String(i)];
+
+          // Some registry builds store the CID on-chain; attempt best-effort fallback.
+          const onchainCid = (batch?.ipfsCID && typeof batch.ipfsCID === 'string') ? batch.ipfsCID : null;
           
-          if (!cid) {
-            console.warn(`   ⚠️  No CID found in events for batch ${i}, skipping`);
+          const resolvedCid = cid || onchainCid;
+
+          if (!resolvedCid) {
+            console.warn(`   ⚠️  No CID found for batch ${i} (cid-map missing), skipping`);
             continue;
           }
           
           // Validate CID format (should start with 'Qm' or 'bafy' for IPFS, not '0x')
-          if (cid.startsWith('0x') || cid === '0x0000000000000000000000000000000000000000000000000000000000000100') {
-            console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${cid.slice(0, 20)}... (looks like a hash, not an IPFS CID)`);
+          if (resolvedCid.startsWith('0x') || resolvedCid === '0x0000000000000000000000000000000000000000000000000000000000000100') {
+            console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${resolvedCid.slice(0, 20)}... (looks like a hash, not an IPFS CID)`);
             continue;
           }
           
-          console.log(`   📍 CID from events: ${cid}`);
+          console.log(`   📍 CID resolved: ${resolvedCid}`);
           
           await new Promise(resolve => setTimeout(resolve, 300));
           
           console.log(`   🌐 Fetching IOC data from IPFS...`);
-          const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
+          const response = await fetch(`/api/ipfs-fetch?cid=${resolvedCid}`);
           const result = await response.json();
           
           if (!result.success) {
@@ -240,7 +246,7 @@ export default function EnhancedIOCSearch() {
             network: network.name,
             networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
             chainId: network.chainId,
-            cid: cid,
+            cid: resolvedCid,
             merkleRoot: batch.merkleRoot,
             timestamp: Number(batch.timestamp),
             approved: batch.accepted,
