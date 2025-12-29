@@ -6,16 +6,17 @@ export const NETWORKS = {
     name: "Ethereum Sepolia",
     rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/OJZ2zwAbqwG_YYm9N6vuj",
     explorerUrl: "https://sepolia.etherscan.io",
-    deploymentBlock: 7340000, // Approximate - adjust if contracts deployed earlier
+  // Sepolia L1 CID-view upgrade deployment block
+  deploymentBlock: 9936626,
     nativeCurrency: {
       name: "Sepolia ETH",
       symbol: "ETH",
       decimals: 18
     },
     contracts: {
-      registry: "0xea816C1B93F5d76e03055BFcFE2ba5645341e09E",  // ✅ CORRECT - from test-addresses.json
-      governance: "0xfE4aDfFA3C1d855b21161B1f38167eC5c3C0d919",  // ✅ CORRECT - from test-addresses.json
-      storage: "0x6032c74688Be90A9E91d770bCe2d5D07d219ebDd"      // ✅ CORRECT - from test-addresses.json
+      registry: "0x98692b63ce6dDb5b6E944dEFEbD4A98068Ba121B",  // ✅ Sepolia L1 registry (CID view)
+      governance: "0xF195062B11FD4B62535c2335A86b3A9D66fFb7cD",  // ✅ Sepolia ThresholdGovernance
+      storage: "0xfB493122A23cbdF829743332e97a6b8437630d59"      // ✅ Sepolia StorageContribution
     },
     gasPrice: 20,
     gasPriceUnit: "Gwei"
