@@ -47,6 +47,13 @@ export async function GET(request) {
   const t0 = Date.now();
   const { searchParams } = new URL(request.url);
 
+  // Helpful for debugging unexpected callers (e.g. spammy missing params in prod logs)
+  const reqMeta = {
+    referer: request.headers.get('referer') || '',
+    userAgent: request.headers.get('user-agent') || '',
+    // NOTE: request.ip isn't available in all runtimes; keep it simple.
+  };
+
   const chainId = Number(searchParams.get('chainId'));
   const rpcUrl = searchParams.get('rpcUrl');
   const registryAddress = searchParams.get('registry');
@@ -63,6 +70,15 @@ export async function GET(request) {
   // the server already knows right now.
   const allowStale = searchParams.get('allowStale') === '1';
   if (!chainId || !registryAddress) {
+    console.warn('[cid-map] Missing required params', {
+      chainId: searchParams.get('chainId'),
+      registry: searchParams.get('registry'),
+      rpcUrl: Boolean(searchParams.get('rpcUrl')),
+      deploymentBlock: searchParams.get('deploymentBlock'),
+      maxBlocks: searchParams.get('maxBlocks'),
+      allowStale,
+      ...reqMeta
+    });
     return NextResponse.json({
       success: false,
       error: 'Required query params: chainId, registry'
@@ -75,6 +91,13 @@ export async function GET(request) {
   // If we have something cached and the caller is OK with potentially stale data,
   // return immediately (even without rpcUrl).
   if (allowStale && existing) {
+    console.log('[cid-map] cache-hit', {
+      chainId,
+      registry: registryAddress,
+      stale: !isFresh(existing),
+      size: Object.keys(existing.cidMap || {}).length,
+      elapsedMs: Date.now() - t0
+    });
     return NextResponse.json({
       success: true,
       cached: true,
@@ -92,12 +115,24 @@ export async function GET(request) {
 
   // Past this point we need an RPC URL to make progress.
   if (!rpcUrl) {
+    console.warn('[cid-map] Missing rpcUrl (cannot scan)', {
+      chainId,
+      registry: registryAddress,
+      allowStale,
+      ...reqMeta
+    });
     return NextResponse.json({
       success: false,
       error: 'Missing rpcUrl. Provide rpcUrl or call with allowStale=1 to return cached data only.'
     }, { status: 400 });
   }
   if (!force && isFresh(existing)) {
+    console.log('[cid-map] fresh-cache', {
+      chainId,
+      registry: registryAddress,
+      size: Object.keys(existing.cidMap || {}).length,
+      elapsedMs: Date.now() - t0
+    });
     return NextResponse.json({
       success: true,
       cached: true,
@@ -185,6 +220,20 @@ export async function GET(request) {
     updatedAt: Date.now()
   };
   CACHE.maps.set(cacheKey, newEntry);
+
+  console.log('[cid-map] scan-done', {
+    chainId,
+    registry: registryAddress,
+    startBlock: start,
+    endBlock: endCap,
+    latestBlock,
+    scannedBlocks: scanned,
+    windows,
+    eventsFound,
+    rateLimited,
+    cidCount: Object.keys(cidMap || {}).length,
+    elapsedMs: Date.now() - t0
+  });
 
   return NextResponse.json({
     success: true,
