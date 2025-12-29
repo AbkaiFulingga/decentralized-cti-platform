@@ -71,10 +71,15 @@ export default function EnhancedIOCSearch() {
         const resp = await fetch('/api/search?q=&limit=1');
         const json = await resp.json();
         if (!json?.success) throw new Error(json?.error || 'search endpoint error');
+        const idx = json?.meta?.index;
+        const counts = idx
+          ? `pins=${idx.pinsIndexed ?? 0}, iocs=${idx.iocsIndexed ?? 0}`
+          : 'unknown counts';
+        const last = idx?.lastIndexFinish ? `last=${idx.lastIndexFinish}` : 'last=never';
         setSearchIndexStatus({
           loading: false,
           ok: true,
-          message: `Search API ready (db: ${json?.meta?.dbPath || 'unknown'})`
+          message: `Search API ready (${counts}, ${last})`
         });
       } catch (e) {
         setSearchIndexStatus({
@@ -646,10 +651,10 @@ export default function EnhancedIOCSearch() {
       try {
         const resp = await fetch(`/api/search?q=${encodeURIComponent(rawQuery)}&limit=50`);
         const json = await resp.json();
-        if (json?.success && Array.isArray(json.results) && json.results.length) {
+        if (json?.success && Array.isArray(json.results)) {
           // Map server results into existing UI format. Proof verification is only available
           // when we have a local batch with iocs+merkleRoot, so keep verified = null here.
-          const matches = json.results.map((r, idx) => ({
+          const serverMatches = json.results.map((r, idx) => ({
             ioc: r.ioc,
             iocIndex: null,
             batch: {
@@ -677,7 +682,43 @@ export default function EnhancedIOCSearch() {
             source: 'pinata-search'
           }));
 
-          setSearchResults(matches);
+          if (serverMatches.length > 0) {
+            setSearchResults(serverMatches);
+          } else {
+            const idx = json?.meta?.index;
+            const hint = idx && (idx.pinsIndexed || idx.iocsIndexed)
+              ? `No matches found for "${rawQuery}" in ${idx.iocsIndexed || 0} indexed IOC(s).`
+              : `No matches yet. Your Pinata index looks empty — run reindex to populate it, then try again.`;
+            setSearchResults([
+              {
+                ioc: hint,
+                iocIndex: null,
+                batch: {
+                  batchId: null,
+                  network: 'Server index',
+                  networkIcon: '🗄️',
+                  chainId: null,
+                  cid: null,
+                  merkleRoot: null,
+                  timestamp: 0,
+                  approved: false,
+                  contributorHash: null,
+                  isPublic: true,
+                  confirmations: 0,
+                  disputes: 0,
+                  iocs: [],
+                  format: null,
+                  explorerUrl: null,
+                  registryAddress: null,
+                  governanceAddress: null
+                },
+                merkleProof: null,
+                verified: null,
+                source: 'pinata-search'
+              }
+            ]);
+          }
+
           setLoading(false);
           return;
         }
@@ -714,18 +755,11 @@ export default function EnhancedIOCSearch() {
     })();
   };
 
-  const confirmBatch = async (batchId, network) => {
-    try {
-      setVotingBatch(batchId);
-      
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      
-      const currentNet = await provider.getNetwork();
-      const targetNetwork = network.includes('Ethereum') ? NETWORKS.sepolia : NETWORKS.arbitrumSepolia;
-      
-      if (currentNet.chainId.toString() !== targetNetwork.chainId.toString()) {
-        alert(`Please switch to ${targetNetwork.name} to vote on this batch`);
+          if (matches.length > 0) {
+            setSearchResults(matches);
+          } else {
+            // Make the empty-state explicit so users don't think search is broken.
+            const idx = json?.meta?.index;
         setVotingBatch(null);
         return;
       }
