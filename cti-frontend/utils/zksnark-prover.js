@@ -151,11 +151,11 @@ export class ZKSnarkProver {
     this.contributorTree = null;
     this.poseidonCache = null;
     this.snarkjsPromise = null;
-    
-    // Pre-initialize snarkjs in browser environment
-    if (typeof window !== 'undefined') {
-      this.snarkjsPromise = this._initializeSnarkjs();
-    }
+
+    // NOTE: Do not pre-initialize snarkjs at module load / construction time.
+    // This avoids noisy runtime errors on pages that import this module, but don't
+    // actually need zkSNARK functionality immediately.
+    // snarkjs will be loaded lazily via _ensureSnarkjs() when a proof is generated.
   }
 
   /**
