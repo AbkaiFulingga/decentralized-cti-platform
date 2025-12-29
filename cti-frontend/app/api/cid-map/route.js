@@ -20,7 +20,7 @@ const CACHE = {
 };
 
 function getCacheKey(chainId, registryAddress) {
-  return `${chainId}:${registryAddress.toLowerCase()}`;
+  return `${chainId}:${String(registryAddress || '').toLowerCase()}`;
 }
 
 function isFresh(entry) {
@@ -62,15 +62,15 @@ export async function GET(request) {
   // return it without requiring rpcUrl. Useful for pages that just want whatever
   // the server already knows right now.
   const allowStale = searchParams.get('allowStale') === '1';
-    const cacheKey = getCacheKey(chainId, registryAddress);
-    const existing = CACHE.maps.get(cacheKey);
-
   if (!chainId || !registryAddress) {
     return NextResponse.json({
       success: false,
       error: 'Required query params: chainId, registry'
     }, { status: 400 });
   }
+
+  const cacheKey = getCacheKey(chainId, registryAddress);
+  const existing = CACHE.maps.get(cacheKey);
 
   // If we have something cached and the caller is OK with potentially stale data,
   // return immediately (even without rpcUrl).
