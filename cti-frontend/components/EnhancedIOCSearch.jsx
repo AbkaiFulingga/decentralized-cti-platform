@@ -532,6 +532,23 @@ export default function EnhancedIOCSearch() {
     return `${Math.round((confirmations / total) * 100)}%`;
   };
 
+  const shortCid = (cid) => {
+    const s = String(cid || '').trim();
+    if (!s) return '—';
+    if (s.length <= 18) return s;
+    return `${s.slice(0, 10)}…${s.slice(-6)}`;
+  };
+
+  const copyToClipboard = async (text) => {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(String(text || ''));
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto">
       <div className="bg-gray-800/50 backdrop-blur-xl shadow-2xl rounded-2xl p-8 border border-gray-700/50">
@@ -771,7 +788,16 @@ export default function EnhancedIOCSearch() {
                 </div>
 
                 {searchResults.map((match, idx) => {
-                  const resultKey = `${match.batch.network}-${match.batch.batchId}-${match.iocIndex}`;
+                  const cid = match?.batch?.cid || null;
+                  const resultKey = `${String(match?.source || 'search')}:${String(match?.batch?.network || 'Pinata')}:${String(cid || '')}:${idx}`;
+                  const merkleProof = Array.isArray(match?.merkleProof) ? match.merkleProof : [];
+                  const iocs = Array.isArray(match?.batch?.iocs) ? match.batch.iocs : [];
+                  const matchCount = Number(match?.batch?._pinMatchCount ?? match?.batch?.matchCount ?? iocs.length) || iocs.length;
+                  const totalIocs = Number(match?.batch?._pinIocTotal ?? match?.batch?.iocTotal ?? match?.batch?.totalIocs ?? 0) || 0;
+                  const pinName = match?.batch?._pinName || match?.batch?.pinName || null;
+                  const pinCreatedAt = match?.batch?._pinCreatedAt || match?.batch?.createdAt || null;
+                  const hasBatchId = Number.isFinite(Number(match?.batch?.batchId)) && match.batch.batchId !== null;
+                  const hasTimestamp = Number.isFinite(Number(match?.batch?.timestamp)) && Number(match.batch.timestamp) > 0;
                   
                   return (
                     <div
@@ -801,7 +827,30 @@ export default function EnhancedIOCSearch() {
                                 </span>
                               </div>
                               <p className="text-gray-400 text-sm">
-                                Found in Batch #{match.batch.batchId} • {new Date(match.batch.timestamp * 1000).toLocaleString()}
+                                {pinName ? (
+                                  <span>
+                                    File: <span className="text-gray-200">{pinName}</span>
+                                  </span>
+                                ) : (
+                                  <span>
+                                    CID: <span className="text-gray-200 font-mono">{shortCid(cid)}</span>
+                                  </span>
+                                )}
+                                {pinCreatedAt ? (
+                                  <>
+                                    {' '}• Pinned {new Date(pinCreatedAt).toLocaleString()}
+                                  </>
+                                ) : null}
+                                {hasBatchId ? (
+                                  <>
+                                    {' '}• Batch #{match.batch.batchId}
+                                  </>
+                                ) : null}
+                                {hasTimestamp ? (
+                                  <>
+                                    {' '}• {new Date(match.batch.timestamp * 1000).toLocaleString()}
+                                  </>
+                                ) : null}
                               </p>
                             </div>
                           </div>
@@ -821,8 +870,36 @@ export default function EnhancedIOCSearch() {
                         </div>
 
                         <div className="mb-4 p-4 bg-gray-950/50 rounded-lg">
-                          <p className="text-gray-400 text-xs mb-1">Matched IOC:</p>
-                          <p className="text-white font-mono text-sm break-all">{match.ioc}</p>
+                          <p className="text-gray-400 text-xs mb-1">Matches in this CID:</p>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white font-mono text-sm break-all">{match.ioc}</p>
+                              <p className="text-gray-500 text-xs mt-2">
+                                {matchCount} match(es)
+                                {totalIocs ? ` • ${totalIocs} total IOC(s) in file` : ''}
+                              </p>
+                            </div>
+                            <div className="flex gap-2">
+                              {!!cid && (
+                                <button
+                                  onClick={() => copyToClipboard(cid)}
+                                  className="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-200 rounded-lg text-xs font-semibold transition-all"
+                                >
+                                  Copy CID
+                                </button>
+                              )}
+                              {!!cid && (
+                                <a
+                                  href={`https://gateway.pinata.cloud/ipfs/${cid}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-xs font-semibold transition-all"
+                                >
+                                  Open
+                                </a>
+                              )}
+                            </div>
+                          </div>
                         </div>
 
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
@@ -856,7 +933,7 @@ export default function EnhancedIOCSearch() {
                             {expandedResult === resultKey ? '▼ Hide Details' : '▶ Show Merkle Proof & Batch Info'}
                           </button>
 
-                          {match.batch.approved && (
+                          {match.batch.approved && Number.isFinite(Number(match.batch.batchId)) && match.batch.registryAddress && match.batch.explorerUrl && (
                             <div className="flex gap-2">
                               <button
                                 onClick={() => confirmBatch(match.batch.batchId, match.batch.network)}
@@ -893,9 +970,9 @@ export default function EnhancedIOCSearch() {
                             </div>
 
                             <div className="bg-gray-900/70 rounded-lg p-3">
-                              <p className="text-gray-400 mb-1">Merkle Proof ({match.merkleProof.length} hashes)</p>
+                              <p className="text-gray-400 mb-1">Merkle Proof ({merkleProof.length} hashes)</p>
                               <div className="space-y-1 max-h-48 overflow-y-auto">
-                                {match.merkleProof.map((hash, i) => (
+                                {merkleProof.map((hash, i) => (
                                   <p key={i} className="text-purple-400 font-mono text-xs break-all">
                                     [{i}] {hash}
                                   </p>
@@ -912,7 +989,7 @@ export default function EnhancedIOCSearch() {
                                 </div>
                                 <div>
                                   <span className="text-gray-500">Total IOCs:</span>
-                                  <span className="text-white ml-2">{match.batch.iocs.length}</span>
+                                  <span className="text-white ml-2">{iocs.length}</span>
                                 </div>
                                 <div>
                                   <span className="text-gray-500">Format:</span>
@@ -929,7 +1006,7 @@ export default function EnhancedIOCSearch() {
                               <p className="text-green-300 font-semibold mb-2">🎯 Verification Status:</p>
                               <ul className="space-y-1 text-green-200 text-xs">
                                 <li>✓ IOC found in batch #{match.batch.batchId} on {match.batch.network}</li>
-                                <li>✓ Merkle proof validated ({match.merkleProof.length} proof hashes)</li>
+                                <li>✓ Merkle proof validated ({merkleProof.length} proof hashes)</li>
                                 <li>✓ IPFS content integrity verified</li>
                                 <li>✓ On-chain Merkle root matches</li>
                                 <li>✓ {match.batch.approved ? 'Governance approved' : 'Awaiting governance approval'}</li>
@@ -939,22 +1016,26 @@ export default function EnhancedIOCSearch() {
                           </div>
 
                           <div className="mt-4 flex gap-3">
-                            <a
-                              href={`${match.batch.explorerUrl}/address/${match.batch.registryAddress}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all"
-                            >
-                              🔗 View Contract
-                            </a>
-                            <a
-                              href={`https://gateway.pinata.cloud/ipfs/${match.batch.cid}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
-                            >
-                              📦 View on IPFS
-                            </a>
+                            {match.batch.explorerUrl && match.batch.registryAddress && (
+                              <a
+                                href={`${match.batch.explorerUrl}/address/${match.batch.registryAddress}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold transition-all"
+                              >
+                                🔗 View Contract
+                              </a>
+                            )}
+                            {match.batch.cid && (
+                              <a
+                                href={`https://gateway.pinata.cloud/ipfs/${match.batch.cid}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
+                              >
+                                📦 View on IPFS
+                              </a>
+                            )}
                           </div>
                         </div>
                       )}
