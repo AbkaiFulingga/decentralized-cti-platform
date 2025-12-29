@@ -16,6 +16,8 @@ import { ethers } from 'ethers';
 const CACHE = {
   // key: `${chainId}:${registryAddress}` -> { cidMap, lastScannedBlock, latestKnownBlock, updatedAt }
   maps: new Map(),
+  // key -> Promise resolving when scan completes (prevents duplicate concurrent scans)
+  inFlight: new Map(),
   ttlMs: 60_000 // 1 minute
 };
 
@@ -126,6 +128,34 @@ export async function GET(request) {
       error: 'Missing rpcUrl. Provide rpcUrl or call with allowStale=1 to return cached data only.'
     }, { status: 400 });
   }
+
+  // If another request is already scanning this same registry, don't start a second scan.
+  // For allowStale callers, prefer waiting briefly for the shared scan.
+  const inFlight = CACHE.inFlight.get(cacheKey);
+  if (inFlight) {
+    console.log('[cid-map] in-flight-scan', { chainId, registry: registryAddress });
+    try {
+      await inFlight;
+    } catch {
+      // ignore; we'll fall through and attempt a scan
+    }
+    const after = CACHE.maps.get(cacheKey);
+    if (after?.cidMap) {
+      return NextResponse.json({
+        success: true,
+        cached: true,
+        stale: !isFresh(after),
+        cidMap: after.cidMap,
+        meta: {
+          lastScannedBlock: after.lastScannedBlock,
+          latestKnownBlock: after.latestKnownBlock,
+          updatedAt: after.updatedAt,
+          elapsedMs: Date.now() - t0,
+          note: 'Returned after waiting for in-flight scan.'
+        }
+      });
+    }
+  }
   if (!force && isFresh(existing)) {
     console.log('[cid-map] fresh-cache', {
       chainId,
@@ -148,7 +178,12 @@ export async function GET(request) {
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const latestBlock = await provider.getBlockNumber();
-  const { chunkSize, delayMs } = getDefaults(chainId, rpcUrl);
+  const defaults = getDefaults(chainId, rpcUrl);
+  const chunkSize = defaults.chunkSize;
+  // If caller is using a small maxBlocks budget, don't sleep as aggressively.
+  const delayMs = (Number(chainId) === 11155111 && maxBlocks <= 5000)
+    ? Math.min(defaults.delayMs, 120)
+    : defaults.delayMs;
 
   // BatchAdded(uint256 indexed index, string cid, ...)
   const abi = [
@@ -172,7 +207,8 @@ export async function GET(request) {
   let rateLimited = 0;
 
   // Scan forward from start -> endCap
-  for (let from = start; from <= endCap; from += (chunkSize + 1)) {
+  const scanPromise = (async () => {
+    for (let from = start; from <= endCap; from += (chunkSize + 1)) {
     const to = Math.min(from + chunkSize, endCap);
     windows++;
     scanned += (to - from + 1);
@@ -211,6 +247,14 @@ export async function GET(request) {
 
     // throttle to reduce CU/sec spikes
     await sleep(delayMs);
+    }
+  })();
+
+  CACHE.inFlight.set(cacheKey, scanPromise);
+  try {
+    await scanPromise;
+  } finally {
+    CACHE.inFlight.delete(cacheKey);
   }
 
   const newEntry = {
