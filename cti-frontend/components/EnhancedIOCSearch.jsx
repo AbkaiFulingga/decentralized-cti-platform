@@ -755,34 +755,40 @@ export default function EnhancedIOCSearch() {
     })();
   };
 
-          if (matches.length > 0) {
-            setSearchResults(matches);
-          } else {
-            // Make the empty-state explicit so users don't think search is broken.
-            const idx = json?.meta?.index;
+  const confirmBatch = async (batchId, network) => {
+    try {
+      setVotingBatch(batchId);
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+
+      const currentNet = await provider.getNetwork();
+      const targetNetwork = network.includes('Ethereum') ? NETWORKS.sepolia : NETWORKS.arbitrumSepolia;
+
+      if (currentNet.chainId.toString() !== targetNetwork.chainId.toString()) {
+        alert(`Please switch to ${targetNetwork.name} to vote on this batch`);
         setVotingBatch(null);
         return;
       }
-      
+
       const registryABI = [
-        "function confirmBatch(uint256 batchIndex) external"
+        'function confirmBatch(uint256 batchIndex) external'
       ];
-      
+
       const registry = new ethers.Contract(
         targetNetwork.contracts.registry,
         registryABI,
         signer
       );
-      
+
       console.log(`Confirming batch ${batchId} on ${network}...`);
       const tx = await registry.confirmBatch(batchId, { gasLimit: 150000 });
-      
+
       await tx.wait();
-      console.log("✅ Batch confirmed!");
-      
+      console.log('✅ Batch confirmed!');
+
       await indexAllBatches();
       performSearch();
-      
     } catch (error) {
       console.error('Confirmation error:', error);
       alert(`Failed to confirm batch: ${error.message}`);
