@@ -18,6 +18,14 @@ export default function EnhancedIOCSearch() {
   const [expandedResult, setExpandedResult] = useState(null);
   const [votingBatch, setVotingBatch] = useState(null);
   const [indexProgress, setIndexProgress] = useState({ current: 0, total: 0, network: '' });
+  const [cidOverrides, setCidOverrides] = useState({});
+  const [overrideBatchIndex, setOverrideBatchIndex] = useState('');
+  const [overrideCid, setOverrideCid] = useState('');
+
+  const searchableIocCount = allBatches.reduce((sum, b) => sum + (b?.iocs?.length || 0), 0);
+  const fetchableBatchCount = allBatches.filter(b => (b?.iocs?.length || 0) > 0).length;
+  const cidMissingCount = allBatches.filter(b => b?.cidStatus === 'missing').length;
+  const cidInvalidCount = allBatches.filter(b => b?.cidStatus === 'invalid').length;
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -37,9 +45,53 @@ export default function EnhancedIOCSearch() {
   useEffect(() => {
     // Indexing/search is read-only; don't require a wallet connection.
     // If a wallet is connected we'll still capture the address for voting actions.
+    try {
+      if (typeof window !== 'undefined') {
+        const raw = window.localStorage.getItem('cti:cidOverrides:v1');
+        if (raw) setCidOverrides(JSON.parse(raw));
+      }
+    } catch {
+      // ignore
+    }
     indexAllBatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const getOverrideKey = (chainId, batchIndex) => `${String(chainId)}:${String(batchIndex)}`;
+
+  const saveCidOverride = () => {
+    const idx = Number(overrideBatchIndex);
+    const cid = String(overrideCid || '').trim();
+    if (!Number.isFinite(idx) || idx < 0) {
+      alert('Batch index must be a non-negative number');
+      return;
+    }
+    if (!cid) {
+      alert('CID is required');
+      return;
+    }
+    // Very basic sanity check; allow either CIDv0 (Qm...) or CIDv1 (bafy...).
+    if (!(cid.startsWith('Qm') || cid.startsWith('bafy'))) {
+      const proceed = confirm('CID does not look like an IPFS CID (expected Qm... or bafy...). Save anyway?');
+      if (!proceed) return;
+    }
+
+  // Best-effort default: Arbitrum Sepolia (since that's where CIDs are usually missing).
+  // If needed, users can add other keys directly in localStorage.
+  const defaultChainId = NETWORKS?.arbitrumSepolia?.chainId || 421614;
+  const key = getOverrideKey(defaultChainId, idx);
+    const next = { ...(cidOverrides || {}), [key]: cid };
+    setCidOverrides(next);
+    try {
+      window.localStorage.setItem('cti:cidOverrides:v1', JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+    setOverrideCid('');
+    setOverrideBatchIndex('');
+    // Re-index so the override applies.
+    reindexNow();
+  };
 
   const checkConnection = async () => {
     if (window.ethereum) {
@@ -209,10 +261,14 @@ export default function EnhancedIOCSearch() {
           });
           
           // CID resolution order:
+          // 0) local override (manual)
           // 1) L1-only view (getBatchCID) if deployed
           // 2) cidMap (from /api/cid-map)
           // 3) batches(i).ipfsCID (some deployments)
           // 4) small per-index event scan fallback
+
+          const overrideKey = getOverrideKey(network.chainId, i);
+          const overrideCidValue = cidOverrides?.[overrideKey];
 
           let viewCid = null;
           try {
@@ -226,7 +282,7 @@ export default function EnhancedIOCSearch() {
           }
 
           // cidMap comes from JSON so keys might be strings; check both forms.
-          const cid = viewCid || cidMap[i] || cidMap[String(i)];
+          const cid = overrideCidValue || viewCid || cidMap[i] || cidMap[String(i)];
 
           // Fallback #1: some deployments store CID on-chain at batches(index).ipfsCID.
           let onchainCid = null;
@@ -614,8 +670,13 @@ export default function EnhancedIOCSearch() {
                     <div>
                       <p className="text-green-300 font-semibold">Index Ready</p>
                       <p className="text-gray-400 text-sm">
-                        {allBatches.length} batches indexed • {allBatches.reduce((sum, b) => sum + b.iocs.length, 0)} IOCs searchable
+                        {allBatches.length} batches found • {fetchableBatchCount} batches fetched • {searchableIocCount} IOCs searchable
                       </p>
+                      {(cidMissingCount > 0 || cidInvalidCount > 0) && (
+                        <p className="text-gray-500 text-xs mt-1">
+                          Note: {cidMissingCount} batch(es) missing CID and {cidInvalidCount} batch(es) with invalid CID on-chain. These can’t be fetched from IPFS yet.
+                        </p>
+                      )}
                     </div>
                   </div>
                   <button
@@ -626,6 +687,40 @@ export default function EnhancedIOCSearch() {
                     🔄 Re-index
                   </button>
                 </div>
+              </div>
+            )}
+
+            {!indexing && (cidMissingCount > 0 || cidInvalidCount > 0) && (
+              <div className="mb-6 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
+                <p className="text-purple-200 font-semibold mb-2">🧩 Arbitrum CID overrides (optional)</p>
+                <p className="text-gray-400 text-sm mb-3">
+                  Arbitrum batches can exist on-chain while the plaintext IPFS CID isn’t retrievable from your RPC (logs missing). If you know the CID for a batch, paste it here to make that batch searchable.
+                </p>
+                <div className="flex flex-col md:flex-row gap-3">
+                  <input
+                    type="number"
+                    value={overrideBatchIndex}
+                    onChange={(e) => setOverrideBatchIndex(e.target.value)}
+                    placeholder="Batch index (e.g. 21)"
+                    className="md:w-56 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono"
+                  />
+                  <input
+                    type="text"
+                    value={overrideCid}
+                    onChange={(e) => setOverrideCid(e.target.value)}
+                    placeholder="IPFS CID (Qm... or bafy...)"
+                    className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono"
+                  />
+                  <button
+                    onClick={saveCidOverride}
+                    className="px-5 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-xl text-sm transition-all"
+                  >
+                    Save & Re-index
+                  </button>
+                </div>
+                <p className="text-gray-500 text-xs mt-2">
+                  Saved in your browser only (localStorage key: <span className="font-mono">cti:cidOverrides:v1</span>). Overrides are per-chain.
+                </p>
               </div>
             )}
 
