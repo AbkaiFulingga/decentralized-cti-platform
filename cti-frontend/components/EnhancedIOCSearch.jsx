@@ -3,24 +3,17 @@
 
 import { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
-import { MerkleTree } from 'merkletreejs';
-import keccak256 from 'keccak256';
 import { NETWORKS } from '../utils/constants';
 
 export default function EnhancedIOCSearch() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [indexing, setIndexing] = useState(false);
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
-  const [allBatches, setAllBatches] = useState([]);
   const [expandedResult, setExpandedResult] = useState(null);
   const [votingBatch, setVotingBatch] = useState(null);
-  const [indexProgress, setIndexProgress] = useState({ current: 0, total: 0, network: '' });
-  const [cidOverrides, setCidOverrides] = useState({});
-  const [overrideBatchIndex, setOverrideBatchIndex] = useState('');
-  const [overrideCid, setOverrideCid] = useState('');
+
 
   // Key escrow sync (for encrypted bundles stored in Pinata)
   const [keySyncing, setKeySyncing] = useState(false);
@@ -36,10 +29,8 @@ export default function EnhancedIOCSearch() {
   const [reindexing, setReindexing] = useState(false);
   const [reindexStatus, setReindexStatus] = useState(null);
 
-  const searchableIocCount = allBatches.reduce((sum, b) => sum + (b?.iocs?.length || 0), 0);
-  const fetchableBatchCount = allBatches.filter(b => (b?.iocs?.length || 0) > 0).length;
-  const cidMissingCount = allBatches.filter(b => b?.cidStatus === 'missing').length;
-  const cidInvalidCount = allBatches.filter(b => b?.cidStatus === 'invalid').length;
+  // NOTE: Search is Pinata/SQLite based. Chain CID discovery is intentionally not used here
+  // (it’s slow and unreliable on public RPCs, especially on L2). Keep chain indexing elsewhere.
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -57,17 +48,8 @@ export default function EnhancedIOCSearch() {
   }, []);
 
   useEffect(() => {
-    // Indexing/search is read-only; don't require a wallet connection.
+    // Search is read-only; don't require a wallet connection.
     // If a wallet is connected we'll still capture the address for voting actions.
-    try {
-      if (typeof window !== 'undefined') {
-        const raw = window.localStorage.getItem('cti:cidOverrides:v1');
-        if (raw) setCidOverrides(JSON.parse(raw));
-      }
-    } catch {
-      // ignore
-    }
-    indexAllBatches();
     // Also check whether the server-side search index is available.
     // (This is the real path for L2, since L2 CID discovery can be unreliable.)
     (async () => {
@@ -96,42 +78,6 @@ export default function EnhancedIOCSearch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const getOverrideKey = (chainId, batchIndex) => `${String(chainId)}:${String(batchIndex)}`;
-
-  const saveCidOverride = () => {
-    const idx = Number(overrideBatchIndex);
-    const cid = String(overrideCid || '').trim();
-    if (!Number.isFinite(idx) || idx < 0) {
-      alert('Batch index must be a non-negative number');
-      return;
-    }
-    if (!cid) {
-      alert('CID is required');
-      return;
-    }
-    // Very basic sanity check; allow either CIDv0 (Qm...) or CIDv1 (bafy...).
-    if (!(cid.startsWith('Qm') || cid.startsWith('bafy'))) {
-      const proceed = confirm('CID does not look like an IPFS CID (expected Qm... or bafy...). Save anyway?');
-      if (!proceed) return;
-    }
-
-  // Best-effort default: Arbitrum Sepolia (since that's where CIDs are usually missing).
-  // If needed, users can add other keys directly in localStorage.
-  const defaultChainId = NETWORKS?.arbitrumSepolia?.chainId || 421614;
-  const key = getOverrideKey(defaultChainId, idx);
-    const next = { ...(cidOverrides || {}), [key]: cid };
-    setCidOverrides(next);
-    try {
-      window.localStorage.setItem('cti:cidOverrides:v1', JSON.stringify(next));
-    } catch {
-      // ignore
-    }
-    setOverrideCid('');
-    setOverrideBatchIndex('');
-    // Re-index so the override applies.
-    reindexNow();
-  };
-
   const checkConnection = async () => {
     if (window.ethereum) {
       try {
@@ -152,7 +98,6 @@ export default function EnhancedIOCSearch() {
     if (accounts.length === 0) {
       setWalletConnected(false);
       setWalletAddress('');
-      setAllBatches([]);
     } else {
       setWalletAddress(accounts[0]);
       setWalletConnected(true);
@@ -180,12 +125,7 @@ export default function EnhancedIOCSearch() {
     }
   };
 
-  const reindexNow = async () => {
-    if (indexing) return;
-    setAllBatches([]);
-    setSearchResults([]);
-    await indexAllBatches();
-  };
+  // NOTE: Chain re-indexing is intentionally removed from this page.
 
   const syncLocalKeysToEscrow = async () => {
     if (typeof window === 'undefined') return;
@@ -367,337 +307,8 @@ export default function EnhancedIOCSearch() {
     }
   };
 
-  const indexBatchesFromNetwork = async (network) => {
-    try {
-      console.log(`🔍 [${network.name}] Starting batch indexing...`);
-      console.log(`   📡 RPC: ${network.rpcUrl}`);
-      console.log(`   📝 Registry: ${network.contracts.registry}`);
-      
-      const provider = new ethers.JsonRpcProvider(network.rpcUrl);
-      
-      const registryABI = [
-        "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
-        // L1-only upgrade (Sepolia): allow reading plaintext CID without relying on logs.
-        "function getBatchCID(uint256 index) external view returns (string)",
-        // Some deployments expose the full batch struct via a public mapping.
-        "function batches(uint256) public view returns (bytes32 cidCommitment, string ipfsCID, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmationCount, uint256 falsePositiveReports, bytes32 merkleRootHash)",
-        "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
-      ];
-      
-      const registry = new ethers.Contract(network.contracts.registry, registryABI, provider);
-      let count;
-      try {
-        count = await registry.getBatchCount();
-      } catch (e) {
-        console.error(`❌ [${network.name}] getBatchCount() failed (ABI mismatch or wrong contract address?)`, {
-          error: e?.message || e,
-          address: network.contracts.registry
-        });
-        return [];
-      }
-      const countNum = Number(count);
-      
-      console.log(`📊 [${network.name}] Found ${countNum} batches`);
-      
-      if (countNum === 0) {
-        console.log(`⚠️  [${network.name}] No batches to index`);
-        return [];
-      }
-      
-      // Prefer server-side CID cache to avoid heavy/fragile eth_getLogs scans on Sepolia.
-      console.log(`🗺️  [${network.name}] Loading CID map from server cache...`);
-      let cidMap = {};
-      try {
-        const params = new URLSearchParams({
-          chainId: String(network.chainId),
-          rpcUrl: network.rpcUrl,
-          registry: network.contracts.registry,
-          deploymentBlock: String(network.deploymentBlock || 0),
-          // L2 note: Arbitrum Sepolia has very large block heights. A 20k scan budget is usually
-          // nowhere near enough to cover the deploy->now range, and many RPCs also don't provide
-          // reliable logs. We still call the endpoint (it may have a warmed cache), but we don't
-          // depend on it.
-          maxBlocks: network.chainId === 11155111 ? '2000' : '5000000',
-          allowStale: '1'
-        });
-        const resp = await fetch(`/api/cid-map?${params.toString()}`);
-        const json = await resp.json();
-        if (json?.success && json?.cidMap) {
-          cidMap = json.cidMap;
-          console.log(`✅ [${network.name}] CID map loaded`, json?.meta);
-        } else {
-          throw new Error(json?.error || 'cid-map fetch failed');
-        }
-      } catch (e) {
-        console.warn(`⚠️  [${network.name}] CID cache unavailable; falling back to live event scan`, e?.message || e);
-        const filter = registry.filters.BatchAdded();
-        const latestBlock = await provider.getBlockNumber();
-        const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
-        const recentStartBlock = Math.max(0, latestBlock - blocksBack);
-        const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
-        // IMPORTANT: stay on the same provider/network; do not use Infura helpers that may target mainnet.
-        // Keep this bounded to a recent window to avoid provider limits.
-        const events = await registry.queryFilter(filter, startBlock, latestBlock);
-        console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
-        events.forEach(event => {
-          cidMap[String(Number(event.args.index))] = event.args.cid;
-        });
-      }
-      
-      // Limit to last 100 batches for demo responsiveness (implicit limit, no UI text)
-      const batchLimit = Math.min(100, countNum);
-      const startIndex = Math.max(0, countNum - batchLimit);
-      
-      const indexed = [];
-      
-      for (let i = startIndex; i < countNum; i++) {
-        setIndexProgress({ current: i - startIndex + 1, total: batchLimit, network: network.name });
-        
-        console.log(`\n🔄 [${network.name}] Processing batch ${i}/${countNum - 1}...`);
-        
-        try {
-          // Fetch batch data with detailed logging
-          console.log(`   📡 Calling getBatch(${i})...`);
-          let batch;
-          try {
-            batch = await registry.getBatch(i);
-          } catch (getBatchError) {
-            console.error(`   ❌ getBatch(${i}) decode error from ${network.name}:`, getBatchError.message);
-            // Skip this batch if we can't decode it - might be ABI mismatch
-            continue;
-          }
-          
-          console.log(`   ✅ Batch ${i} fetched:`, {
-            cidCommitment: batch.cidCommitment,
-            merkleRoot: batch.merkleRoot,
-            timestamp: Number(batch.timestamp),
-            accepted: batch.accepted,
-            contributorHash: batch.contributorHash,
-            isPublic: batch.isPublic,
-            confirmations: Number(batch.confirmations),
-            falsePositives: Number(batch.falsePositives)
-          });
-          
-          // CID resolution order:
-          // 0) local override (manual)
-          // 1) L1-only view (getBatchCID) if deployed
-          // 2) cidMap (from /api/cid-map)
-          // 3) batches(i).ipfsCID (some deployments)
-          // 4) small per-index event scan fallback
-
-          const overrideKey = getOverrideKey(network.chainId, i);
-          const overrideCidValue = cidOverrides?.[overrideKey];
-
-          let viewCid = null;
-          try {
-            // Only call on Sepolia to avoid touching L2 behavior.
-            if (network.chainId === 11155111) {
-              const c = await registry.getBatchCID(i);
-              if (typeof c === 'string' && c.length) viewCid = c;
-            }
-          } catch {
-            // ignore; method may not exist on older deployments
-          }
-
-          // cidMap comes from JSON so keys might be strings; check both forms.
-          const cid = overrideCidValue || viewCid || cidMap[i] || cidMap[String(i)];
-
-          // Fallback #1: some deployments store CID on-chain at batches(index).ipfsCID.
-          let onchainCid = null;
-          try {
-            const b = await registry.batches(i);
-            if (b && typeof b.ipfsCID === 'string' && b.ipfsCID.length) {
-              onchainCid = b.ipfsCID;
-            }
-          } catch {
-            // ignore; not all deployments expose batches()
-          }
-
-          // Fallback #2: tiny event scan for this specific index (only if missing).
-          let eventCid = null;
-          if (!cid && !onchainCid) {
-            try {
-              const filter = registry.filters.BatchAdded(i);
-              const latestBlock = await provider.getBlockNumber();
-              const blocksBack = network.chainId === 11155111 ? 250_000 : 3_000_000;
-              const fromBlock = Math.max(network.deploymentBlock || 0, Math.max(0, latestBlock - blocksBack));
-              // Direct query on the current provider. Boundaries are already conservative.
-              const events = await registry.queryFilter(filter, fromBlock, latestBlock);
-              if (events?.length) {
-                const ev = events[events.length - 1];
-                if (ev?.args?.cid && typeof ev.args.cid === 'string') {
-                  eventCid = ev.args.cid;
-                  // Opportunistically warm the local map so the next batch doesn't have to scan.
-                  cidMap[String(i)] = eventCid;
-                }
-              }
-            } catch (e) {
-              console.warn(`   ⚠️  Live event scan fallback failed for batch ${i}:`, e?.message || e);
-            }
-          }
-
-          const resolvedCid = cid || onchainCid || eventCid;
-
-          // IMPORTANT UX: on Arbitrum we often cannot resolve the plaintext CID without reliable logs.
-          // Do NOT skip the batch entirely; keep it in state so the UI can show "batch exists but CID
-          // unavailable" instead of showing 0 indexed.
-          if (!resolvedCid) {
-            indexed.push({
-              batchId: i,
-              network: network.name,
-              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
-              chainId: network.chainId,
-              cid: null,
-              cidStatus: 'missing',
-              cidReason: 'CID could not be resolved (no on-chain plaintext CID and logs unavailable).',
-              merkleRoot: batch.merkleRoot,
-              timestamp: Number(batch.timestamp),
-              approved: batch.accepted,
-              contributorHash: batch.contributorHash,
-              isPublic: batch.isPublic,
-              confirmations: Number(batch.confirmations),
-              disputes: Number(batch.falsePositives),
-              iocs: [],
-              format: null,
-              explorerUrl: network.explorerUrl,
-              registryAddress: network.contracts.registry,
-              governanceAddress: network.contracts.governance
-            });
-            console.warn(`   ⚠️  No CID found for batch ${i} (keeping placeholder)`);
-            continue;
-          }
-          
-          // Validate CID format (should start with 'Qm' or 'bafy' for IPFS, not '0x')
-          if (resolvedCid.startsWith('0x') || resolvedCid === '0x0000000000000000000000000000000000000000000000000000000000000100') {
-            console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${resolvedCid.slice(0, 20)}... (looks like a hash, not an IPFS CID)`);
-            indexed.push({
-              batchId: i,
-              network: network.name,
-              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
-              chainId: network.chainId,
-              cid: null,
-              cidStatus: 'invalid',
-              cidReason: 'Resolved CID value looks like a hash, not a CID.',
-              merkleRoot: batch.merkleRoot,
-              timestamp: Number(batch.timestamp),
-              approved: batch.accepted,
-              contributorHash: batch.contributorHash,
-              isPublic: batch.isPublic,
-              confirmations: Number(batch.confirmations),
-              disputes: Number(batch.falsePositives),
-              iocs: [],
-              format: null,
-              explorerUrl: network.explorerUrl,
-              registryAddress: network.contracts.registry,
-              governanceAddress: network.contracts.governance
-            });
-            continue;
-          }
-          
-          console.log(`   📍 CID resolved: ${resolvedCid}`);
-          
-          await new Promise(resolve => setTimeout(resolve, 300));
-          
-          console.log(`   🌐 Fetching IOC data from IPFS...`);
-          const response = await fetch(`/api/ipfs-fetch?cid=${resolvedCid}`);
-          const result = await response.json();
-          
-          if (!result.success) {
-            console.error(`   ❌ IPFS fetch failed:`, result.error);
-            continue;
-          }
-          
-          if (!result.data || !result.data.iocs) {
-            console.warn(`   ⚠️  No IOCs found in IPFS data`);
-            continue;
-          }
-          
-          console.log(`   ✅ Retrieved ${result.data.iocs.length} IOCs`);
-          
-          const indexedBatch = {
-            batchId: i,
-            network: network.name,
-            networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
-            chainId: network.chainId,
-            cid: resolvedCid,
-            merkleRoot: batch.merkleRoot,
-            timestamp: Number(batch.timestamp),
-            approved: batch.accepted,
-            contributorHash: batch.contributorHash,
-            isPublic: batch.isPublic,
-            confirmations: Number(batch.confirmations),
-            disputes: Number(batch.falsePositives),
-            iocs: result.data.iocs,
-            format: result.data.format,
-            explorerUrl: network.explorerUrl,
-            registryAddress: network.contracts.registry,
-            governanceAddress: network.contracts.governance
-          };
-          
-          indexed.push(indexedBatch);
-          console.log(`   ✅ Batch ${i} indexed successfully`);
-          
-        } catch (error) {
-          console.error(`   ❌ Failed to index batch ${i}:`, {
-            error: error.message,
-            code: error.code,
-            stack: error.stack
-          });
-          
-          // Try to decode the error for more details
-          if (error.data) {
-            console.error(`   📊 Error data:`, error.data);
-          }
-        }
-      }
-      
-      return indexed;
-    } catch (error) {
-      console.error(`Error indexing ${network.name}:`, error);
-      return [];
-    }
-  };
-
-  const indexAllBatches = async () => {
-    console.log('\n═══════════════════════════════════════════════════════');
-    console.log('🚀 Starting Multi-Chain IOC Indexing');
-    console.log('═══════════════════════════════════════════════════════\n');
-    
-    setIndexing(true);
-    setIndexProgress({ current: 0, total: 0, network: 'Starting...' });
-    
-    try {
-      console.log('📡 Indexing from 1 network (L2-only mode):');
-      console.log('   1. Arbitrum Sepolia (L2)');
-      console.log('   (Sepolia/L1 disabled to avoid RPC/log instability)');
-      console.log('');
-      
-      const startTime = Date.now();
-      
-      const l2Batches = await indexBatchesFromNetwork(NETWORKS.arbitrumSepolia);
-      
-      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
-      
-      console.log('\n═══════════════════════════════════════════════════════');
-      console.log('📊 Indexing Complete - Summary');
-      console.log('═══════════════════════════════════════════════════════');
-      console.log(`   ⚡ Arbitrum batches: ${l2Batches.length}`);
-  console.log(`   📦 Total indexed: ${l2Batches.length}`);
-      console.log(`   ⏱️  Time taken: ${elapsedTime}s`);
-      console.log('═══════════════════════════════════════════════════════\n');
-      
-  setAllBatches([...l2Batches]);
-      
-      console.log(`✅ All batches stored in state`);
-    } catch (error) {
-      console.error('❌ Fatal indexing error:', error);
-      console.error('   Stack:', error.stack);
-    } finally {
-      setIndexing(false);
-      setIndexProgress({ current: 0, total: 0, network: '' });
-    }
-  };
+  // NOTE: On-chain batch indexing has been intentionally removed from the Search page.
+  // Search is Pinata/SQLite based and should stay fast and simple.
 
   const performSearch = () => {
     if (!searchQuery.trim()) {
@@ -860,7 +471,6 @@ export default function EnhancedIOCSearch() {
       await tx.wait();
       console.log('✅ Batch confirmed!');
 
-      await indexAllBatches();
       performSearch();
     } catch (error) {
       console.error('Confirmation error:', error);
@@ -902,7 +512,6 @@ export default function EnhancedIOCSearch() {
       await tx.wait();
       console.log("✅ Batch disputed!");
       
-      await indexAllBatches();
       performSearch();
       
     } catch (error) {
@@ -929,7 +538,7 @@ export default function EnhancedIOCSearch() {
         
         <div className="mb-6">
           <h2 className="text-3xl font-bold text-white mb-2">🔍 Search Threat Intelligence</h2>
-          <p className="text-gray-400">Keyword search across IPFS/Pinata (chain indexing is L2-only)</p>
+          <p className="text-gray-400">Fast keyword search across your Pinata-pinned IPFS bundles</p>
         </div>
 
         <>
@@ -947,56 +556,6 @@ export default function EnhancedIOCSearch() {
               </button>
             </div>
           )}
-
-            {indexing && (
-              <div className="mb-6 p-6 bg-blue-500/10 border border-blue-500/30 rounded-xl">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin"></div>
-                  <div className="flex-1">
-                    <p className="text-blue-300 font-semibold mb-2">
-                      📇 Indexing IOCs from {indexProgress.network}...
-                    </p>
-                    <div className="w-full bg-gray-700 rounded-full h-2">
-                      <div 
-                        className="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all"
-                        style={{ width: `${indexProgress.total > 0 ? (indexProgress.current / indexProgress.total) * 100 : 0}%` }}
-                      ></div>
-                    </div>
-                    <p className="text-gray-400 text-xs mt-2">
-                      {indexProgress.current} / {indexProgress.total} batches
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!indexing && allBatches.length > 0 && (
-              <div className="mb-6 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="text-2xl">✅</span>
-                    <div>
-                      <p className="text-green-300 font-semibold">Index Ready</p>
-                      <p className="text-gray-400 text-sm">
-                        {allBatches.length} batches found • {fetchableBatchCount} batches fetched • {searchableIocCount} IOCs searchable
-                      </p>
-                      {(cidMissingCount > 0 || cidInvalidCount > 0) && (
-                        <p className="text-gray-500 text-xs mt-1">
-                          Note: {cidMissingCount} batch(es) missing CID and {cidInvalidCount} batch(es) with invalid CID on-chain. These can’t be fetched from IPFS yet.
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={reindexNow}
-                    disabled={indexing}
-                    className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-sm transition-all"
-                  >
-                    🔄 Re-index
-                  </button>
-                </div>
-              </div>
-            )}
 
             <div className={`mb-6 p-4 rounded-xl border ${
               searchIndexStatus.loading
@@ -1072,39 +631,7 @@ export default function EnhancedIOCSearch() {
               )}
             </div>
 
-            {!indexing && (cidMissingCount > 0 || cidInvalidCount > 0) && (
-              <div className="mb-6 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
-                <p className="text-purple-200 font-semibold mb-2">🧩 Arbitrum CID overrides (optional)</p>
-                <p className="text-gray-400 text-sm mb-3">
-                  Arbitrum batches can exist on-chain while the plaintext IPFS CID isn’t retrievable from your RPC (logs missing). If you know the CID for a batch, paste it here to make that batch searchable.
-                </p>
-                <div className="flex flex-col md:flex-row gap-3">
-                  <input
-                    type="number"
-                    value={overrideBatchIndex}
-                    onChange={(e) => setOverrideBatchIndex(e.target.value)}
-                    placeholder="Batch index (e.g. 21)"
-                    className="md:w-56 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono"
-                  />
-                  <input
-                    type="text"
-                    value={overrideCid}
-                    onChange={(e) => setOverrideCid(e.target.value)}
-                    placeholder="IPFS CID (Qm... or bafy...)"
-                    className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono"
-                  />
-                  <button
-                    onClick={saveCidOverride}
-                    className="px-5 py-3 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-xl text-sm transition-all"
-                  >
-                    Save & Re-index
-                  </button>
-                </div>
-                <p className="text-gray-500 text-xs mt-2">
-                  Saved in your browser only (localStorage key: <span className="font-mono">cti:cidOverrides:v1</span>). Overrides are per-chain.
-                </p>
-              </div>
-            )}
+            {/* Chain-based CID overrides intentionally removed from Search to keep it fast & simple. */}
 
             <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
               <p className="text-amber-200 font-semibold mb-2">🔐 Encrypted key sync (for searchable encrypted pins)</p>
@@ -1173,13 +700,13 @@ export default function EnhancedIOCSearch() {
                   onChange={(e) => setManualCid(e.target.value)}
                   placeholder="IPFS CID (Qm... or bafy...)"
                   className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-slate-400 text-gray-100 placeholder-gray-500 font-mono"
-                  disabled={manualCidLoading || indexing || loading}
+                  disabled={manualCidLoading || loading}
                 />
                 <button
                   onClick={fetchByCid}
-                  disabled={manualCidLoading || indexing || loading || !String(manualCid || '').trim()}
+                  disabled={manualCidLoading || loading || !String(manualCid || '').trim()}
                   className={`px-5 py-3 rounded-xl font-semibold transition-all ${
-                    manualCidLoading || indexing || loading || !String(manualCid || '').trim()
+                    manualCidLoading || loading || !String(manualCid || '').trim()
                       ? 'bg-gray-700 cursor-not-allowed text-gray-500'
                       : 'bg-slate-600 hover:bg-slate-700 text-white'
                   }`}
@@ -1206,13 +733,13 @@ export default function EnhancedIOCSearch() {
                   onKeyPress={(e) => e.key === 'Enter' && performSearch()}
                   placeholder="e.g., malicious, 192.168, phishing.com"
                   className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-purple-500 text-gray-100 placeholder-gray-500 font-mono"
-                  disabled={loading || indexing}
+                  disabled={loading}
                 />
                 <button
                   onClick={performSearch}
-                  disabled={loading || indexing || !searchQuery.trim()}
+                  disabled={loading || !searchQuery.trim()}
                   className={`px-6 py-3 rounded-xl font-semibold transition-all ${
-                    loading || indexing || !searchQuery.trim()
+                    loading || !searchQuery.trim()
                       ? 'bg-gray-700 cursor-not-allowed text-gray-500'
                       : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white'
                   }`}
@@ -1221,7 +748,7 @@ export default function EnhancedIOCSearch() {
                 </button>
               </div>
               <p className="mt-2 text-sm text-gray-500">
-                💡 L2-only mode: {allBatches.length} Arbitrum batches (Tip: Pinata-backed server search works even when on-chain CIDs are missing)
+                💡 Tip: Pinata-backed server search works even when on-chain CIDs are missing
               </p>
             </div>
 
@@ -1437,7 +964,7 @@ export default function EnhancedIOCSearch() {
               </div>
             )}
 
-            {!loading && !indexing && searchQuery && searchResults.length === 0 && (
+            {!loading && searchQuery && searchResults.length === 0 && (
               <div className="text-center py-12">
                 <div className="text-6xl mb-4">🔍</div>
                 <p className="text-gray-400 text-lg">No matches found for "{searchQuery}"</p>
