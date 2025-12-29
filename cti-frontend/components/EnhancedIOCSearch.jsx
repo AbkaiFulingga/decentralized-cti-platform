@@ -22,6 +22,16 @@ export default function EnhancedIOCSearch() {
   const [overrideBatchIndex, setOverrideBatchIndex] = useState('');
   const [overrideCid, setOverrideCid] = useState('');
 
+  // Key escrow sync (for encrypted bundles stored in Pinata)
+  const [keySyncing, setKeySyncing] = useState(false);
+  const [keySyncStatus, setKeySyncStatus] = useState(null);
+
+  const [searchIndexStatus, setSearchIndexStatus] = useState({ loading: true, ok: null, message: 'Checking…' });
+
+  const [manualCid, setManualCid] = useState('');
+  const [manualCidLoading, setManualCidLoading] = useState(false);
+  const [manualCidStatus, setManualCidStatus] = useState(null);
+
   const searchableIocCount = allBatches.reduce((sum, b) => sum + (b?.iocs?.length || 0), 0);
   const fetchableBatchCount = allBatches.filter(b => (b?.iocs?.length || 0) > 0).length;
   const cidMissingCount = allBatches.filter(b => b?.cidStatus === 'missing').length;
@@ -54,6 +64,26 @@ export default function EnhancedIOCSearch() {
       // ignore
     }
     indexAllBatches();
+    // Also check whether the server-side search index is available.
+    // (This is the real path for L2, since L2 CID discovery can be unreliable.)
+    (async () => {
+      try {
+        const resp = await fetch('/api/search?q=&limit=1');
+        const json = await resp.json();
+        if (!json?.success) throw new Error(json?.error || 'search endpoint error');
+        setSearchIndexStatus({
+          loading: false,
+          ok: true,
+          message: `Search API ready (db: ${json?.meta?.dbPath || 'unknown'})`
+        });
+      } catch (e) {
+        setSearchIndexStatus({
+          loading: false,
+          ok: false,
+          message: `Search API not ready: ${String(e?.message || e)}`
+        });
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -146,6 +176,127 @@ export default function EnhancedIOCSearch() {
     setAllBatches([]);
     setSearchResults([]);
     await indexAllBatches();
+  };
+
+  const syncLocalKeysToEscrow = async () => {
+    if (typeof window === 'undefined') return;
+
+    const adminToken = process.env.NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN;
+    if (!adminToken) {
+      setKeySyncStatus({
+        ok: false,
+        message:
+          'Missing NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN in the frontend env. Add it and reload before syncing keys.'
+      });
+      return;
+    }
+
+    setKeySyncing(true);
+    setKeySyncStatus(null);
+    try {
+      const keysToSync = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (!k) continue;
+        if (!k.startsWith('ioc-key-')) continue;
+        const keyId = k.slice('ioc-key-'.length);
+        const keyHex = window.localStorage.getItem(k);
+
+        if (!keyId || !keyHex) continue;
+        if (!/^[0-9a-fA-F]+$/.test(keyHex)) continue;
+        keysToSync.push({ keyId, keyHex });
+      }
+
+      if (!keysToSync.length) {
+        setKeySyncStatus({ ok: true, message: 'No local encrypted keys found to sync (localStorage has no ioc-key-* entries).' });
+        return;
+      }
+
+      let okCount = 0;
+      let failCount = 0;
+      const errors = [];
+
+      for (const entry of keysToSync) {
+        try {
+          const resp = await fetch('/api/key-escrow', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${adminToken}`
+            },
+            body: JSON.stringify({
+              keyId: entry.keyId,
+              keyHex: entry.keyHex,
+              algorithm: 'cryptojs-aes-cbc'
+            })
+          });
+          const json = await resp.json();
+          if (json?.success) {
+            okCount++;
+          } else {
+            failCount++;
+            errors.push({ keyId: entry.keyId, error: json?.error || `HTTP ${resp.status}` });
+          }
+        } catch (e) {
+          failCount++;
+          errors.push({ keyId: entry.keyId, error: String(e?.message || e) });
+        }
+      }
+
+      setKeySyncStatus({ ok: failCount === 0, okCount, failCount, total: keysToSync.length, errors });
+    } finally {
+      setKeySyncing(false);
+    }
+  };
+
+  const fetchByCid = async () => {
+    const cid = String(manualCid || '').trim();
+    if (!cid) return;
+    setManualCidLoading(true);
+    setManualCidStatus(null);
+    try {
+      const resp = await fetch(`/api/ipfs-fetch?cid=${encodeURIComponent(cid)}`);
+      const json = await resp.json();
+      if (!json?.success) throw new Error(json?.error || 'IPFS fetch failed');
+
+      const data = json?.data;
+      const iocs = Array.isArray(data?.iocs) ? data.iocs : [];
+      const format = data?.format || data?.type || null;
+
+      // Put it into the results UI using the same shape as server-side matches.
+      setSearchResults([
+        {
+          ioc: `CID: ${cid}`,
+          iocIndex: null,
+          batch: {
+            batchId: null,
+            network: 'IPFS',
+            networkIcon: '🗂️',
+            chainId: null,
+            cid,
+            merkleRoot: null,
+            timestamp: 0,
+            approved: false,
+            contributorHash: null,
+            isPublic: true,
+            confirmations: 0,
+            disputes: 0,
+            iocs,
+            format,
+            explorerUrl: null,
+            registryAddress: null,
+            governanceAddress: null
+          },
+          verified: null
+        }
+      ]);
+
+      setManualCidStatus({ ok: true, message: `Fetched ${iocs.length} IOC(s) via ${json?.gateway || 'gateway'}` });
+    } catch (e) {
+      setManualCidStatus({ ok: false, message: String(e?.message || e) });
+    } finally {
+      setManualCidLoading(false);
+    }
   };
 
   const indexBatchesFromNetwork = async (network) => {
@@ -449,31 +600,26 @@ export default function EnhancedIOCSearch() {
     setIndexProgress({ current: 0, total: 0, network: 'Starting...' });
     
     try {
-      console.log('📡 Indexing from 2 networks in parallel:');
-      console.log('   1. Sepolia (Ethereum L1)');
-      console.log('   2. Arbitrum Sepolia (L2)');
+      console.log('📡 Indexing from 1 network (L2-only mode):');
+      console.log('   1. Arbitrum Sepolia (L2)');
+      console.log('   (Sepolia/L1 disabled to avoid RPC/log instability)');
       console.log('');
       
       const startTime = Date.now();
       
-      const [l1Batches, l2Batches] = await Promise.all([
-        indexBatchesFromNetwork(NETWORKS.sepolia),
-        indexBatchesFromNetwork(NETWORKS.arbitrumSepolia)
-      ]);
+      const l2Batches = await indexBatchesFromNetwork(NETWORKS.arbitrumSepolia);
       
       const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
       
       console.log('\n═══════════════════════════════════════════════════════');
       console.log('📊 Indexing Complete - Summary');
       console.log('═══════════════════════════════════════════════════════');
-      console.log(`   🌐 Sepolia batches: ${l1Batches.length}`);
       console.log(`   ⚡ Arbitrum batches: ${l2Batches.length}`);
-      console.log(`   📦 Total indexed: ${l1Batches.length + l2Batches.length}`);
+  console.log(`   📦 Total indexed: ${l2Batches.length}`);
       console.log(`   ⏱️  Time taken: ${elapsedTime}s`);
       console.log('═══════════════════════════════════════════════════════\n');
       
-      const combined = [...l1Batches, ...l2Batches];
-      setAllBatches(combined);
+  setAllBatches([...l2Batches]);
       
       console.log(`✅ All batches stored in state`);
     } catch (error) {
@@ -739,6 +885,32 @@ export default function EnhancedIOCSearch() {
               </div>
             )}
 
+            <div className={`mb-6 p-4 rounded-xl border ${
+              searchIndexStatus.loading
+                ? 'bg-blue-500/10 border-blue-500/30'
+                : searchIndexStatus.ok
+                  ? 'bg-emerald-500/10 border-emerald-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
+            }`}>
+              <p className="font-semibold mb-1">
+                🗄️ Server search status
+              </p>
+              <p className={`text-sm ${
+                searchIndexStatus.loading
+                  ? 'text-blue-300'
+                  : searchIndexStatus.ok
+                    ? 'text-emerald-300'
+                    : 'text-red-300'
+              }`}>
+                {searchIndexStatus.message}
+              </p>
+              {!searchIndexStatus.loading && !searchIndexStatus.ok && (
+                <p className="text-gray-400 text-xs mt-2">
+                  If this is a fresh server, make sure <span className="font-mono">PINATA_JWT</span> is set and run the reindex endpoint (<span className="font-mono">/api/search/reindex</span>).
+                </p>
+              )}
+            </div>
+
             {!indexing && (cidMissingCount > 0 || cidInvalidCount > 0) && (
               <div className="mb-6 p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl">
                 <p className="text-purple-200 font-semibold mb-2">🧩 Arbitrum CID overrides (optional)</p>
@@ -773,6 +945,94 @@ export default function EnhancedIOCSearch() {
               </div>
             )}
 
+            <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+              <p className="text-amber-200 font-semibold mb-2">🔐 Encrypted key sync (for searchable encrypted pins)</p>
+              <p className="text-gray-400 text-sm mb-3">
+                If you previously encrypted batches, the decryption key lives in your browser (localStorage <span className="font-mono">ioc-key-*</span>).
+                Syncing uploads those keys to the server key escrow so the Pinata indexer can decrypt and index encrypted bundles.
+              </p>
+              <div className="flex flex-col md:flex-row gap-3 items-start md:items-center">
+                <button
+                  onClick={syncLocalKeysToEscrow}
+                  disabled={keySyncing}
+                  className={`px-5 py-3 rounded-xl font-semibold transition-all ${
+                    keySyncing
+                      ? 'bg-gray-700 cursor-not-allowed text-gray-400'
+                      : 'bg-amber-600 hover:bg-amber-700 text-white'
+                  }`}
+                >
+                  {keySyncing ? '⏳ Syncing keys…' : '⬆️ Sync local keys to server'}
+                </button>
+                <p className="text-gray-500 text-xs">
+                  Requires <span className="font-mono">NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN</span> set in the frontend and <span className="font-mono">CTI_SEARCH_ADMIN_TOKEN</span> on the server.
+                </p>
+              </div>
+
+              {keySyncStatus && (
+                <div className="mt-3">
+                  {'total' in keySyncStatus ? (
+                    <div className={`${keySyncStatus.ok ? 'text-green-300' : 'text-red-300'} text-sm`}
+                      >
+                      {keySyncStatus.ok
+                        ? `✅ Synced ${keySyncStatus.okCount}/${keySyncStatus.total} key(s) to escrow.`
+                        : `⚠️ Synced ${keySyncStatus.okCount}/${keySyncStatus.total}. Failed: ${keySyncStatus.failCount}.`}
+                    </div>
+                  ) : (
+                    <div className={`${keySyncStatus.ok ? 'text-green-300' : 'text-red-300'} text-sm`}
+                      >
+                      {keySyncStatus.message}
+                    </div>
+                  )}
+
+                  {Array.isArray(keySyncStatus.errors) && keySyncStatus.errors.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-gray-400 text-xs">Show errors</summary>
+                      <ul className="mt-2 space-y-1 text-xs text-gray-400 font-mono">
+                        {keySyncStatus.errors.slice(0, 20).map((e) => (
+                          <li key={e.keyId}>
+                            {e.keyId}: {e.error}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="mb-6 p-4 bg-slate-500/10 border border-slate-500/30 rounded-xl">
+              <p className="text-slate-200 font-semibold mb-2">🗂️ Fetch directly from IPFS (no on-chain CID needed)</p>
+              <p className="text-gray-400 text-sm mb-3">
+                If you already have a CID (from Pinata UI, logs, or elsewhere), paste it here and we’ll fetch the JSON bundle immediately.
+              </p>
+              <div className="flex flex-col md:flex-row gap-3">
+                <input
+                  type="text"
+                  value={manualCid}
+                  onChange={(e) => setManualCid(e.target.value)}
+                  placeholder="IPFS CID (Qm... or bafy...)"
+                  className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-slate-400 text-gray-100 placeholder-gray-500 font-mono"
+                  disabled={manualCidLoading || indexing || loading}
+                />
+                <button
+                  onClick={fetchByCid}
+                  disabled={manualCidLoading || indexing || loading || !String(manualCid || '').trim()}
+                  className={`px-5 py-3 rounded-xl font-semibold transition-all ${
+                    manualCidLoading || indexing || loading || !String(manualCid || '').trim()
+                      ? 'bg-gray-700 cursor-not-allowed text-gray-500'
+                      : 'bg-slate-600 hover:bg-slate-700 text-white'
+                  }`}
+                >
+                  {manualCidLoading ? '⏳ Fetching…' : '⬇️ Fetch CID'}
+                </button>
+              </div>
+              {manualCidStatus && (
+                <p className={`mt-2 text-xs ${manualCidStatus.ok ? 'text-green-300' : 'text-red-300'}`}>
+                  {manualCidStatus.message}
+                </p>
+              )}
+            </div>
+
             <div className="mb-6">
               <label className="block text-sm font-semibold text-gray-300 mb-3">
                 🔎 Search for IOC (Partial Match)
@@ -800,7 +1060,7 @@ export default function EnhancedIOCSearch() {
                 </button>
               </div>
               <p className="mt-2 text-sm text-gray-500">
-                💡 Searches across {allBatches.length} batches from both Ethereum L1 and Arbitrum L2
+                💡 L2-only mode: {allBatches.length} Arbitrum batches (Tip: Pinata-backed server search works even when on-chain CIDs are missing)
               </p>
             </div>
 
