@@ -108,6 +108,8 @@ export default function EnhancedIOCSearch() {
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
         "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        // Some deployments expose the full batch struct via a public mapping.
+        "function batches(uint256) public view returns (bytes32 cidCommitment, string ipfsCID, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmationCount, uint256 falsePositiveReports, bytes32 merkleRootHash)",
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
       ];
       
@@ -205,10 +207,43 @@ export default function EnhancedIOCSearch() {
           // cidMap comes from JSON so keys might be strings; check both forms.
           const cid = cidMap[i] || cidMap[String(i)];
 
-          // Some registry builds store the CID on-chain; attempt best-effort fallback.
-          const onchainCid = (batch?.ipfsCID && typeof batch.ipfsCID === 'string') ? batch.ipfsCID : null;
-          
-          const resolvedCid = cid || onchainCid;
+          // Fallback #1: some deployments store CID on-chain at batches(index).ipfsCID.
+          let onchainCid = null;
+          try {
+            const b = await registry.batches(i);
+            if (b && typeof b.ipfsCID === 'string' && b.ipfsCID.length) {
+              onchainCid = b.ipfsCID;
+            }
+          } catch {
+            // ignore; not all deployments expose batches()
+          }
+
+          // Fallback #2: tiny event scan for this specific index (only if missing).
+          let eventCid = null;
+          if (!cid && !onchainCid) {
+            try {
+              const filter = registry.filters.BatchAdded(i);
+              const latestBlock = await provider.getBlockNumber();
+              const blocksBack = network.chainId === 11155111 ? 250_000 : 3_000_000;
+              const fromBlock = Math.max(network.deploymentBlock || 0, Math.max(0, latestBlock - blocksBack));
+              const events = await smartQueryEvents(registry, filter, fromBlock, latestBlock, provider, {
+                deploymentBlock: network.deploymentBlock,
+                ...getEventQueryDefaults(network)
+              });
+              if (events?.length) {
+                const ev = events[events.length - 1];
+                if (ev?.args?.cid && typeof ev.args.cid === 'string') {
+                  eventCid = ev.args.cid;
+                  // Opportunistically warm the local map so the next batch doesn't have to scan.
+                  cidMap[String(i)] = eventCid;
+                }
+              }
+            } catch (e) {
+              console.warn(`   ⚠️  Live event scan fallback failed for batch ${i}:`, e?.message || e);
+            }
+          }
+
+          const resolvedCid = cid || onchainCid || eventCid;
 
           if (!resolvedCid) {
             console.warn(`   ⚠️  No CID found for batch ${i} (cid-map missing), skipping`);
