@@ -177,7 +177,8 @@ export default function TransactionHistory() {
               if (submitterAddress.toLowerCase() === address.toLowerCase()) {
                 
                 let iocCount = '?';
-                const cid = cidMap[i];
+                // cidMap comes from JSON so keys might be strings; check both.
+                const cid = cidMap[i] || cidMap[String(i)];
                 
                 // Only fetch if we have a valid CID (not a hex string)
                 if (cid && !cid.startsWith('0x') && cid.length > 10) {
