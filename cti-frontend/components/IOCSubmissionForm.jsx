@@ -324,6 +324,38 @@ export default function IOCSubmissionForm() {
           // Store key locally (WARNING: Demo only, not production safe)
           encryptor.storeKeyLocally(encrypted.keyId, encrypted.key);
           encryptionKey = encrypted.key;
+
+          // NEW (demo-friendly): also store the key server-side so the Pinata search indexer
+          // can decrypt and index encrypted bundles.
+          //
+          // IMPORTANT: This uses a bearer token that must be configured via NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN.
+          // In production, you'd replace this with real auth (session/admin) and wouldn't expose a long-lived
+          // admin token to browsers.
+          try {
+            const token = process.env.NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN;
+            if (!token) {
+              console.warn('⚠️ Missing NEXT_PUBLIC_CTI_SEARCH_ADMIN_TOKEN; encrypted bundles will not be searchable server-side unless the key is escrowed.');
+            } else {
+              const escrowResp = await fetch('/api/key-escrow', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  keyId: encrypted.keyId,
+                  keyHex: encrypted.key,
+                  algorithm: encrypted.algorithmId || 'AES-256-CBC'
+                })
+              });
+              const escrowJson = await escrowResp.json();
+              if (!escrowJson?.success) {
+                console.warn('⚠️ Key escrow store failed; encrypted bundles may not be searchable server-side.', escrowJson?.error);
+              }
+            }
+          } catch (e) {
+            console.warn('⚠️ Key escrow unavailable; encrypted bundles may not be searchable server-side.', e?.message || e);
+          }
           
           // Replace payload with encrypted version (no key included in upload)
           uploadPayload = formatForIPFS(encrypted);

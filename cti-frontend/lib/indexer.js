@@ -1,5 +1,7 @@
 import { getDb } from './searchDb.js';
 import { listPins, fetchPinnedJson } from './pinataClient.js';
+import CryptoJS from 'crypto-js';
+import { getKey as getEscrowKey } from './keyEscrow.js';
 
 function normalizeIoc(x) {
   if (typeof x !== 'string') return null;
@@ -23,6 +25,36 @@ function extractBatchShape(json) {
     merkleRoot: typeof meta?.merkleRoot === 'string' ? meta.merkleRoot : null,
     encrypted: Boolean(meta?.encrypted)
   };
+}
+
+function tryDecryptEncryptedBundle(json) {
+  // Expected encrypted format from utils/encryption.js::formatForIPFS()
+  // {
+  //   type: 'encrypted-ioc-bundle', algorithm, ciphertext, iv, keyId, metadataHash, timestamp
+  // }
+  if (json?.type !== 'encrypted-ioc-bundle') return null;
+  const keyId = json?.keyId;
+  if (!keyId) return null;
+
+  const entry = getEscrowKey(keyId);
+  if (!entry?.keyHex) return null;
+
+  try {
+    const decrypted = CryptoJS.AES.decrypt(
+      { ciphertext: CryptoJS.enc.Hex.parse(String(json.ciphertext || '')) },
+      CryptoJS.enc.Hex.parse(String(entry.keyHex)),
+      {
+        iv: CryptoJS.enc.Hex.parse(String(json.iv || '')),
+        mode: CryptoJS.mode.CBC,
+        padding: CryptoJS.pad.Pkcs7
+      }
+    );
+    const plaintextJson = decrypted.toString(CryptoJS.enc.Utf8);
+    if (!plaintextJson) return null;
+    return JSON.parse(plaintextJson);
+  } catch {
+    return null;
+  }
 }
 
 export async function reindexFromPinata({
@@ -106,8 +138,11 @@ export async function reindexFromPinata({
         const json = await fetchPinnedJson(cid);
         fetchedPins++;
 
-        const batch = extractBatchShape(json);
-        const iocs = batch.iocs;
+  // If encrypted, attempt server-side decrypt with escrow key.
+  const decrypted = tryDecryptEncryptedBundle(json);
+
+  const batch = extractBatchShape(decrypted || json);
+  const iocs = batch.iocs;
 
         db.transaction(() => {
           for (let i = 0; i < iocs.length; i++) {
