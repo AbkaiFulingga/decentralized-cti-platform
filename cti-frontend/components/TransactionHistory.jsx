@@ -14,6 +14,7 @@ export default function TransactionHistory() {
   const [userAddress, setUserAddress] = useState('');
   const [currentNetwork, setCurrentNetwork] = useState(null);
   const [isBrowser, setIsBrowser] = useState(false);
+  const [lastLoadAt, setLastLoadAt] = useState(0);
 
   useEffect(() => {
     setIsBrowser(typeof window !== 'undefined');
@@ -60,6 +61,11 @@ export default function TransactionHistory() {
   }, [userAddress]);
 
   const loadTransactionHistory = async () => {
+    // Debounce: prevents multiple rapid re-entries (helps avoid duplicate cid-map calls)
+    const now = Date.now();
+    if (now - lastLoadAt < 2000) return;
+    setLastLoadAt(now);
+
     try {
       if (!window.ethereum) {
         setError('Please install MetaMask');
@@ -129,6 +135,9 @@ export default function TransactionHistory() {
           const startBlock = Math.max(config.deploymentBlock || 0, recentStartBlock);
           let cidMap = {};
           try {
+            if (!config?.contracts?.registry || !config?.rpcUrl) {
+              throw new Error('Missing network config (registry or rpcUrl)');
+            }
             const params = new URLSearchParams({
               chainId: String(config.chainId),
               rpcUrl: config.rpcUrl,
