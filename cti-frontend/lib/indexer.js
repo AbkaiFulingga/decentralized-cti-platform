@@ -95,6 +95,7 @@ export async function reindexFromPinata({
   let insertedIocs = 0;
   let fetchedPins = 0;
   let skippedPins = 0;
+  let skippedEncryptedPins = 0;
   let errors = 0;
 
   while (processedPins < limitPins) {
@@ -126,7 +127,7 @@ export async function reindexFromPinata({
       const already = hasIocs.get(cid);
       if (already && !refreshExisting) {
         skippedPins++;
-        progress({ processedPins, fetchedPins, skippedPins, insertedIocs, errors, cid, status: 'skipped-existing' });
+        progress({ processedPins, fetchedPins, skippedPins, skippedEncryptedPins, insertedIocs, errors, cid, status: 'skipped-existing' });
         continue;
       }
 
@@ -138,11 +139,25 @@ export async function reindexFromPinata({
         const json = await fetchPinnedJson(cid);
         fetchedPins++;
 
-  // If encrypted, attempt server-side decrypt with escrow key.
-  const decrypted = tryDecryptEncryptedBundle(json);
+        // E3: never decrypt/index encrypted bundles server-side.
+        // Encrypted content is only searchable locally by users who have the key.
+        if (json?.type === 'encrypted-ioc-bundle') {
+          skippedEncryptedPins++;
+          progress({
+            processedPins,
+            fetchedPins,
+            skippedPins,
+            skippedEncryptedPins,
+            insertedIocs,
+            errors,
+            cid,
+            status: 'skipped-encrypted'
+          });
+          continue;
+        }
 
-  const batch = extractBatchShape(decrypted || json);
-  const iocs = batch.iocs;
+        const batch = extractBatchShape(json);
+        const iocs = batch.iocs;
 
         db.transaction(() => {
           for (let i = 0; i < iocs.length; i++) {
@@ -162,10 +177,10 @@ export async function reindexFromPinata({
           }
         })();
 
-        progress({ processedPins, fetchedPins, skippedPins, insertedIocs, errors, cid, status: 'indexed', iocCount: iocs.length });
+        progress({ processedPins, fetchedPins, skippedPins, skippedEncryptedPins, insertedIocs, errors, cid, status: 'indexed', iocCount: iocs.length });
       } catch (e) {
         errors++;
-        progress({ processedPins, fetchedPins, skippedPins, insertedIocs, errors, cid, status: 'error', error: String(e?.message || e) });
+        progress({ processedPins, fetchedPins, skippedPins, skippedEncryptedPins, insertedIocs, errors, cid, status: 'error', error: String(e?.message || e) });
       }
 
       if (processedPins >= limitPins) break;
@@ -180,6 +195,7 @@ export async function reindexFromPinata({
     processedPins,
     fetchedPins,
     skippedPins,
+    skippedEncryptedPins,
     insertedIocs,
     errors,
     cursor: cursor || null
@@ -240,4 +256,89 @@ export function searchIocs({ query, limit = 50 } = {}) {
   }
 
   return results;
+}
+
+export function searchPinsByIoc({ query, limitPins = 25, limitMatchesPerPin = 20 } = {}) {
+  const db = getDb();
+  const q = String(query || '').trim();
+  if (!q) return [];
+
+  // Step 1: find matching rows (cap total rows to keep it fast)
+  const maxRows = Math.max(1, Math.min(5000, limitPins * Math.max(1, limitMatchesPerPin)));
+  const rows = searchIocs({ query: q, limit: maxRows });
+  if (!rows.length) return [];
+
+  // Step 2: group by cid
+  const byCid = new Map();
+  for (const r of rows) {
+    const cid = r?.cid;
+    if (!cid) continue;
+    let entry = byCid.get(cid);
+    if (!entry) {
+      entry = {
+        cid,
+        network: r?.network || null,
+        matchCount: 0,
+        matches: []
+      };
+      byCid.set(cid, entry);
+    }
+    if (entry.matches.length < limitMatchesPerPin) {
+      entry.matches.push({ ioc: r.ioc });
+    }
+    entry.matchCount++;
+  }
+
+  const cids = Array.from(byCid.keys());
+
+  // Step 3: enrich with per-pin metadata from pin_iocs (counts, ts, etc)
+  const metaStmt = db.prepare(`
+    SELECT
+      cid,
+      COUNT(1) AS totalIocs,
+      MIN(ts) AS firstTs,
+      MAX(ts) AS lastTs,
+      MAX(network) AS network,
+      MAX(source) AS source,
+      MAX(merkle_root) AS merkleRoot,
+      MAX(encrypted) AS encrypted
+    FROM pin_iocs
+    WHERE cid IN (
+      SELECT value FROM json_each(?)
+    )
+    GROUP BY cid
+  `);
+
+  // pack cids into a json array for sqlite json_each
+  let metaRows = [];
+  try {
+    metaRows = metaStmt.all(JSON.stringify(cids));
+  } catch {
+    // If JSON1 isn't available for any reason, skip enrichment.
+    metaRows = [];
+  }
+
+  const metaByCid = new Map(metaRows.map(r => [r.cid, r]));
+
+  const results = [];
+  for (const [cid, entry] of byCid.entries()) {
+    const m = metaByCid.get(cid);
+    results.push({
+      cid,
+      network: m?.network || entry.network,
+      source: m?.source || null,
+      encrypted: Boolean(m?.encrypted),
+      merkleRoot: m?.merkleRoot || null,
+      totalIocs: Number(m?.totalIocs || 0),
+      firstTs: m?.firstTs || null,
+      lastTs: m?.lastTs || null,
+      matchCount: entry.matchCount,
+      matches: entry.matches
+    });
+  }
+
+  // Sort by most matches first
+  results.sort((a, b) => (b.matchCount - a.matchCount) || String(a.cid).localeCompare(String(b.cid)));
+
+  return results.slice(0, Math.max(1, Math.min(200, limitPins)));
 }

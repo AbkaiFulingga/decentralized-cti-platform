@@ -268,7 +268,26 @@ export default function EnhancedIOCSearch() {
       const json = await resp.json();
       if (!json?.success) throw new Error(json?.error || 'IPFS fetch failed');
 
-      const data = json?.data;
+      let data = json?.data;
+
+      // E3: Encrypted bundles are only searchable locally. Attempt local decrypt
+      // using the browser-stored key (localStorage ioc-key-<keyId>) when present.
+      if (data?.type === 'encrypted-ioc-bundle') {
+        const encryptor = new IOCEncryption();
+        const key = encryptor.retrieveKeyLocally(data?.keyId);
+        if (!key) {
+          throw new Error(
+            `Encrypted bundle. Missing local key for keyId=${String(data?.keyId || '')}. ` +
+              'This content is private and not searchable server-side (E3).'
+          );
+        }
+        try {
+          data = encryptor.decryptBundle(data.ciphertext, key, data.iv, data.metadataHash);
+        } catch (e) {
+          throw new Error(`Encrypted bundle. Local decrypt failed: ${String(e?.message || e)}`);
+        }
+      }
+
       const iocs = Array.isArray(data?.iocs) ? data.iocs : [];
       const format = data?.format || data?.type || null;
 
@@ -686,121 +705,126 @@ export default function EnhancedIOCSearch() {
       return;
     }
 
-    // Use server-side Pinata/SQLite search index.
-    // Do not fall back to chain-based/local indexing (it is unreliable when L2 CIDs are missing).
+    // E3: Use server-side plaintext index only.
+    // Encrypted bundles are NOT indexed server-side.
+    // For encrypted content, users must fetch by CID and decrypt locally.
     (async () => {
       setLoading(true);
       const rawQuery = searchQuery.trim();
 
       try {
-        const resp = await fetch(`/api/search?q=${encodeURIComponent(rawQuery)}&limit=50`);
+        const resp = await fetch(`/api/search/pins?q=${encodeURIComponent(rawQuery)}&limitPins=25&limitMatchesPerPin=20`);
         const json = await resp.json();
         if (json?.success && Array.isArray(json.results)) {
-          // Map server results into existing UI format. Proof verification is only available
-          // when we have a local batch with iocs+merkleRoot, so keep verified = null here.
-          const serverMatches = json.results.map((r, idx) => ({
-            ioc: r.ioc,
+          const pins = json.results;
+
+          if (pins.length === 0) {
+            const idx = json?.meta?.index;
+            const hint = idx && (idx.pinsIndexed || idx.iocsIndexed)
+              ? `No plaintext matches found for "${rawQuery}" (indexed plaintext IOCs: ${idx.iocsIndexed || 0}).`
+              : `No matches yet. Your server index is empty — run reindex to populate it, then try again.`;
+            setSearchResults([
+              {
+                ioc: hint,
+                iocIndex: null,
+                batch: {
+                  batchId: null,
+                  network: 'Server index',
+                  networkIcon: '🗄️',
+                  chainId: null,
+                  cid: null,
+                  merkleRoot: null,
+                  timestamp: 0,
+                  approved: false,
+                  contributorHash: null,
+                  isPublic: true,
+                  confirmations: 0,
+                  disputes: 0,
+                  iocs: [],
+                  format: null,
+                  explorerUrl: null,
+                  registryAddress: null,
+                  governanceAddress: null
+                },
+                merkleProof: null,
+                verified: null,
+                source: 'pinata-search'
+              }
+            ]);
+            setLoading(false);
+            return;
+          }
+
+          // Render one result per CID ("file"), showing a preview list of matching IOCs.
+          const grouped = pins.map((p) => ({
+            ioc: `${p.matchCount} match(es) in CID ${String(p.cid).slice(0, 14)}…`,
             iocIndex: null,
             batch: {
               batchId: null,
-              network: r.network || 'Pinata',
-              networkIcon: (r.network || '').toLowerCase().includes('ethereum') ? '🌐' : '⚡',
+              network: p.network || 'Pinata',
+              networkIcon: (p.network || '').toLowerCase().includes('ethereum') ? '🌐' : '⚡',
               chainId: null,
-              cid: r.cid,
+              cid: p.cid,
+              merkleRoot: p.merkleRoot || null,
+              timestamp: 0,
+              approved: false,
+              contributorHash: null,
+              isPublic: true,
+              confirmations: 0,
+              disputes: 0,
+              iocs: Array.isArray(p.matches) ? p.matches.map(m => m.ioc).filter(Boolean) : [],
+              format: 'pinata-index',
+              explorerUrl: null,
+              registryAddress: null,
+              governanceAddress: null,
+              _pinTotalIocs: p.totalIocs,
+              _pinEncrypted: Boolean(p.encrypted),
+              _pinSource: p.source || null,
+              _pinFirstTs: p.firstTs || null,
+              _pinLastTs: p.lastTs || null
+            },
+            merkleProof: null,
+            verified: null,
+            source: 'pinata-search'
+          }));
+
+          setSearchResults(grouped);
+          setLoading(false);
+          return;
+        }
+
+        throw new Error(json?.error || 'Search failed');
+      } catch (e) {
+        setSearchResults([
+          {
+            ioc: `Search error: ${String(e?.message || e)}`,
+            iocIndex: null,
+            batch: {
+              batchId: null,
+              network: 'Server index',
+              networkIcon: '🗄️',
+              chainId: null,
+              cid: null,
               merkleRoot: null,
               timestamp: 0,
               approved: false,
               contributorHash: null,
               isPublic: true,
-
-               confirmations: 0,
-               disputes: 0,
-               iocs: [r.ioc],
-               format: 'cti-ioc-batch',
-               explorerUrl: null,
-               registryAddress: null,
-               governanceAddress: null,
-               _pinataSearchRank: idx
-             },
-             merkleProof: null,
-             verified: null,
-             source: 'pinata-search'
-           }));
-
-           if (serverMatches.length > 0) {
-             setSearchResults(serverMatches);
-           } else {
-             const idx = json?.meta?.index;
-             const hint = idx && (idx.pinsIndexed || idx.iocsIndexed)
-               ? `No matches found for "${rawQuery}" in ${idx.iocsIndexed || 0} indexed IOC(s).`
-               : `No matches yet. Your Pinata index looks empty — run reindex to populate it, then try again.`;
-             setSearchResults([
-               {
-                 ioc: hint,
-                 iocIndex: null,
-                 batch: {
-                   batchId: null,
-                   network: 'Server index',
-                   networkIcon: '🗄️',
-                   chainId: null,
-                   cid: null,
-                   merkleRoot: null,
-                   timestamp: 0,
-                   approved: false,
-                   contributorHash: null,
-                   isPublic: true,
-                   confirmations: 0,
-                   disputes: 0,
-                   iocs: [],
-                   format: null,
-                   explorerUrl: null,
-                   registryAddress: null,
-                   governanceAddress: null
-                 },
-                 merkleProof: null,
-                 verified: null,
-                 source: 'pinata-search'
-               }
-             ]);
-           }
-
-           setLoading(false);
-           return;
-         }
-
-         throw new Error(json?.error || 'Search failed');
-       } catch (e) {
-         setSearchResults([
-           {
-             ioc: `Search error: ${String(e?.message || e)}`,
-             iocIndex: null,
-             batch: {
-               batchId: null,
-               network: 'Server index',
-               networkIcon: '🗄️',
-               chainId: null,
-               cid: null,
-               merkleRoot: null,
-               timestamp: 0,
-               approved: false,
-               contributorHash: null,
-               isPublic: true,
-               confirmations: 0,
-               disputes: 0,
-               iocs: [],
-               format: null,
-               explorerUrl: null,
-               registryAddress: null,
-               governanceAddress: null
-             },
-             merkleProof: null,
-             verified: null,
-             source: 'pinata-search'
-           }
-         ]);
-         setLoading(false);
-         return;
-       }
+              confirmations: 0,
+              disputes: 0,
+              iocs: [],
+              format: null,
+              explorerUrl: null,
+              registryAddress: null,
+              governanceAddress: null
+            },
+            merkleProof: null,
+            verified: null,
+            source: 'pinata-search'
+          }
+        ]);
+        setLoading(false);
+      }
     })();
   };
 
