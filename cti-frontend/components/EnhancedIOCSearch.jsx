@@ -32,6 +32,10 @@ export default function EnhancedIOCSearch() {
   const [manualCidLoading, setManualCidLoading] = useState(false);
   const [manualCidStatus, setManualCidStatus] = useState(null);
 
+  const [reindexToken, setReindexToken] = useState('');
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexStatus, setReindexStatus] = useState(null);
+
   const searchableIocCount = allBatches.reduce((sum, b) => sum + (b?.iocs?.length || 0), 0);
   const fetchableBatchCount = allBatches.filter(b => (b?.iocs?.length || 0) > 0).length;
   const cidMissingCount = allBatches.filter(b => b?.cidStatus === 'missing').length;
@@ -301,6 +305,46 @@ export default function EnhancedIOCSearch() {
       setManualCidStatus({ ok: false, message: String(e?.message || e) });
     } finally {
       setManualCidLoading(false);
+    }
+  };
+
+  const runServerReindex = async ({ limitPins = 500, refreshExisting = true } = {}) => {
+    setReindexing(true);
+    setReindexStatus(null);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      const tok = String(reindexToken || '').trim();
+      if (tok) headers.Authorization = `Bearer ${tok}`;
+
+      const resp = await fetch('/api/search/reindex', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ limitPins, refreshExisting })
+      });
+      const json = await resp.json();
+      if (!json?.success) throw new Error(json?.error || `Reindex failed (HTTP ${resp.status})`);
+
+      setReindexStatus({ ok: true, stats: json?.stats || null, elapsedMs: json?.elapsedMs || null });
+
+      // Refresh the visible server index stats after a successful run.
+      try {
+        const sresp = await fetch('/api/search?q=&limit=1');
+        const sjson = await sresp.json();
+        if (sjson?.success) {
+          const idx = sjson?.meta?.index;
+          const counts = idx
+            ? `pins=${idx.pinsIndexed ?? 0}, iocs=${idx.iocsIndexed ?? 0}`
+            : 'unknown counts';
+          const last = idx?.lastIndexFinish ? `last=${idx.lastIndexFinish}` : 'last=never';
+          setSearchIndexStatus({ loading: false, ok: true, message: `Search API ready (${counts}, ${last})` });
+        }
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      setReindexStatus({ ok: false, error: String(e?.message || e) });
+    } finally {
+      setReindexing(false);
     }
   };
 
@@ -856,7 +900,7 @@ export default function EnhancedIOCSearch() {
         
         <div className="mb-6">
           <h2 className="text-3xl font-bold text-white mb-2">🔍 Search Threat Intelligence</h2>
-          <p className="text-gray-400">Keyword search across all batches on L1 and L2</p>
+          <p className="text-gray-400">Keyword search across IPFS/Pinata (chain indexing is L2-only)</p>
         </div>
 
         <>
@@ -948,6 +992,54 @@ export default function EnhancedIOCSearch() {
                 <p className="text-gray-400 text-xs mt-2">
                   If this is a fresh server, make sure <span className="font-mono">PINATA_JWT</span> is set and run the reindex endpoint (<span className="font-mono">/api/search/reindex</span>).
                 </p>
+              )}
+            </div>
+
+            <div className="mb-6 p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
+              <p className="text-emerald-200 font-semibold mb-2">🧱 Build IPFS search index (Pinata → SQLite)</p>
+              <p className="text-gray-400 text-sm mb-3">
+                This is the button that makes search actually work. It crawls your latest Pinata pins and indexes IOC strings into the server database.
+              </p>
+              <div className="flex flex-col md:flex-row gap-3">
+                <input
+                  type="password"
+                  value={reindexToken}
+                  onChange={(e) => setReindexToken(e.target.value)}
+                  placeholder="Optional: CTI_SEARCH_ADMIN_TOKEN (if required)"
+                  className="flex-1 px-4 py-3 bg-gray-900/70 border border-gray-600 rounded-xl focus:ring-2 focus:ring-emerald-500 text-gray-100 placeholder-gray-500 font-mono"
+                  disabled={reindexing}
+                />
+                <button
+                  onClick={() => runServerReindex({ limitPins: 500, refreshExisting: true })}
+                  disabled={reindexing}
+                  className={`px-5 py-3 rounded-xl font-semibold transition-all ${
+                    reindexing
+                      ? 'bg-gray-700 cursor-not-allowed text-gray-400'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                  }`}
+                >
+                  {reindexing ? '⏳ Reindexing…' : '🔁 Reindex from Pinata'}
+                </button>
+              </div>
+
+              {reindexStatus && (
+                <div className="mt-3 text-sm">
+                  {reindexStatus.ok ? (
+                    <div className="text-emerald-300">
+                      ✅ Reindex complete.
+                      {reindexStatus.elapsedMs != null && (
+                        <span className="text-gray-400"> ({Math.round(reindexStatus.elapsedMs)} ms)</span>
+                      )}
+                      {reindexStatus.stats && (
+                        <div className="mt-1 text-xs text-gray-300 font-mono">
+                          processedPins={reindexStatus.stats.processedPins} fetchedPins={reindexStatus.stats.fetchedPins} insertedIocs={reindexStatus.stats.insertedIocs} errors={reindexStatus.stats.errors}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-red-300">❌ Reindex failed: {reindexStatus.error}</div>
+                  )}
+                </div>
               )}
             </div>
 
