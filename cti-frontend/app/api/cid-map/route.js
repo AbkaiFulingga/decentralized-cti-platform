@@ -199,7 +199,15 @@ export async function GET(request) {
   // Don't scan from 0 accidentally.
   if (start === 0 && deploymentBlock > 0) start = deploymentBlock;
 
-  const endCap = Math.min(latestBlock, start + Math.max(0, maxBlocks));
+  // If caller didn't provide a deployment block (or provided 0), avoid scanning from genesis.
+  // A cold cache should still pick up recent batches; callers can pass deploymentBlock for full correctness.
+  if (start === 0) {
+    const fallbackBlocksBack = Number(chainId) === 11155111 ? 250_000 : 5_000_000;
+    start = Math.max(0, latestBlock - fallbackBlocksBack);
+  }
+
+  // maxBlocks is a budget of blocks scanned; endCap is inclusive.
+  const endCap = Math.min(latestBlock, start + Math.max(0, maxBlocks) - 1);
 
   let scanned = 0;
   let windows = 0;
@@ -208,45 +216,51 @@ export async function GET(request) {
 
   // Scan forward from start -> endCap
   const scanPromise = (async () => {
-    for (let from = start; from <= endCap; from += (chunkSize + 1)) {
-    const to = Math.min(from + chunkSize, endCap);
-    windows++;
-    scanned += (to - from + 1);
+    // Important: increment by (chunkSize + 1) skips blocks.
+    // Using (to + 1) keeps windows contiguous: [from..to], then [to+1..nextTo].
+    for (let from = start; from <= endCap; ) {
+      const to = Math.min(from + chunkSize, endCap);
+      windows++;
+      scanned += (to - from + 1);
 
-    try {
-      const evs = await registry.queryFilter(filter, from, to);
-      if (evs.length) {
+      const applyEvents = (evs) => {
+        if (!evs?.length) return;
         for (const ev of evs) {
-          const idx = Number(ev.args.index);
-          const cid = ev.args.cid;
-          cidMap[idx] = cid;
+          const idx = Number(ev?.args?.index);
+          const cid = ev?.args?.cid;
+          // JSON object keys are always strings; keep it consistent.
+          if (Number.isFinite(idx) && typeof cid === 'string' && cid.length) {
+            cidMap[String(idx)] = cid;
+          }
         }
         eventsFound += evs.length;
-      }
-    } catch (e) {
-      const msg = String(e?.message || e);
-      if (msg.includes('429') || msg.toLowerCase().includes('compute units') || msg.toLowerCase().includes('too many requests')) {
-        rateLimited++;
-        // backoff and retry this window once
-        await sleep(2000);
-        try {
-          const evs = await registry.queryFilter(filter, from, to);
-          if (evs.length) {
-            for (const ev of evs) {
-              const idx = Number(ev.args.index);
-              const cid = ev.args.cid;
-              cidMap[idx] = cid;
-            }
-            eventsFound += evs.length;
+      };
+
+      try {
+        const evs = await registry.queryFilter(filter, from, to);
+        applyEvents(evs);
+      } catch (e) {
+        const msg = String(e?.message || e);
+        if (
+          msg.includes('429') ||
+          msg.toLowerCase().includes('compute units') ||
+          msg.toLowerCase().includes('too many requests')
+        ) {
+          rateLimited++;
+          // backoff and retry this window once
+          await sleep(2000);
+          try {
+            const evs = await registry.queryFilter(filter, from, to);
+            applyEvents(evs);
+          } catch {
+            // leave it; next request can continue
           }
-        } catch {
-          // leave it; next request can continue
         }
       }
-    }
 
-    // throttle to reduce CU/sec spikes
-    await sleep(delayMs);
+      // throttle to reduce CU/sec spikes
+      await sleep(delayMs);
+      from = to + 1;
     }
   })();
 
