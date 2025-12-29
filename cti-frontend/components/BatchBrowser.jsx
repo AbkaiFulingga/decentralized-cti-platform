@@ -20,12 +20,15 @@ export default function BatchBrowser() {
   const [loadingL1, setLoadingL1] = useState(false);
   const [loadingL2, setLoadingL2] = useState(false);
 
+  // Off-chain index fallback stats (Pinata -> SQLite FTS index)
+  const [serverIndexStats, setServerIndexStats] = useState(null);
+
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
       checkConnection();
       window.ethereum.on('accountsChanged', handleAccountsChanged);
       window.ethereum.on('chainChanged', handleChainChanged);
-      
+
       return () => {
         if (window.ethereum.removeListener) {
           window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
@@ -38,6 +41,7 @@ export default function BatchBrowser() {
   useEffect(() => {
     if (walletConnected) {
       loadAllBatches();
+      refreshServerIndexStats();
     }
   }, [walletConnected]);
 
@@ -334,7 +338,25 @@ export default function BatchBrowser() {
     setExpandedBatch(expandedBatch === batchKey ? null : batchKey);
   };
 
+  const refreshServerIndexStats = async () => {
+    try {
+      const resp = await fetch('/api/search?q=__stats__&limit=1');
+      const json = await resp.json();
+      const stats = json?.meta?.index;
+      if (json?.success && stats) {
+        setServerIndexStats(stats);
+      }
+    } catch {
+      // non-fatal
+    }
+  };
+
   const isLoading = loadingL1 || loadingL2;
+
+  const chainTotalIocs = [...l1Batches, ...l2Batches].reduce((sum, b) => sum + (b.iocCount || 0), 0);
+  const displayedTotalIocs = chainTotalIocs > 0
+    ? chainTotalIocs
+    : (serverIndexStats?.iocsIndexed ?? 0);
 
   return (
     <div className="max-w-7xl mx-auto">
@@ -696,10 +718,11 @@ export default function BatchBrowser() {
                   <div className="text-sm text-gray-400">Approved</div>
                 </div>
                 <div>
-                  <div className="text-3xl font-bold text-yellow-400">
-                    {[...l1Batches, ...l2Batches].reduce((sum, b) => sum + (b.iocCount || 0), 0)}
-                  </div>
+                  <div className="text-3xl font-bold text-yellow-400">{displayedTotalIocs}</div>
                   <div className="text-sm text-gray-400">Total IOCs</div>
+                  {chainTotalIocs === 0 && (serverIndexStats?.iocsIndexed ?? 0) > 0 && (
+                    <div className="text-[10px] text-gray-500 mt-1">(from off-chain index)</div>
+                  )}
                 </div>
               </div>
             </div>
