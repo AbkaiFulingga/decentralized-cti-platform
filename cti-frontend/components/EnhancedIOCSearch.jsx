@@ -686,8 +686,8 @@ export default function EnhancedIOCSearch() {
       return;
     }
 
-    // Prefer server-side Pinata/SQLite search index (works even when L2 CIDs are not resolvable from logs).
-    // Fall back to client-side search across already-fetched batches.
+    // Use server-side Pinata/SQLite search index.
+    // Do not fall back to chain-based/local indexing (it is unreliable when L2 CIDs are missing).
     (async () => {
       setLoading(true);
       const rawQuery = searchQuery.trim();
@@ -712,90 +712,95 @@ export default function EnhancedIOCSearch() {
               approved: false,
               contributorHash: null,
               isPublic: true,
-              confirmations: 0,
-              disputes: 0,
-              iocs: [r.ioc],
-              format: 'cti-ioc-batch',
-              explorerUrl: null,
-              registryAddress: null,
-              governanceAddress: null,
-              _pinataSearchRank: idx
-            },
-            merkleProof: null,
-            verified: null,
-            source: 'pinata-search'
-          }));
 
-          if (serverMatches.length > 0) {
-            setSearchResults(serverMatches);
-          } else {
-            const idx = json?.meta?.index;
-            const hint = idx && (idx.pinsIndexed || idx.iocsIndexed)
-              ? `No matches found for "${rawQuery}" in ${idx.iocsIndexed || 0} indexed IOC(s).`
-              : `No matches yet. Your Pinata index looks empty — run reindex to populate it, then try again.`;
-            setSearchResults([
-              {
-                ioc: hint,
-                iocIndex: null,
-                batch: {
-                  batchId: null,
-                  network: 'Server index',
-                  networkIcon: '🗄️',
-                  chainId: null,
-                  cid: null,
-                  merkleRoot: null,
-                  timestamp: 0,
-                  approved: false,
-                  contributorHash: null,
-                  isPublic: true,
-                  confirmations: 0,
-                  disputes: 0,
-                  iocs: [],
-                  format: null,
-                  explorerUrl: null,
-                  registryAddress: null,
-                  governanceAddress: null
-                },
-                merkleProof: null,
-                verified: null,
-                source: 'pinata-search'
-              }
-            ]);
-          }
+               confirmations: 0,
+               disputes: 0,
+               iocs: [r.ioc],
+               format: 'cti-ioc-batch',
+               explorerUrl: null,
+               registryAddress: null,
+               governanceAddress: null,
+               _pinataSearchRank: idx
+             },
+             merkleProof: null,
+             verified: null,
+             source: 'pinata-search'
+           }));
 
-          setLoading(false);
-          return;
-        }
-      } catch (e) {
-        console.warn('⚠️  Pinata search unavailable, falling back to local batches:', e?.message || e);
-      }
+           if (serverMatches.length > 0) {
+             setSearchResults(serverMatches);
+           } else {
+             const idx = json?.meta?.index;
+             const hint = idx && (idx.pinsIndexed || idx.iocsIndexed)
+               ? `No matches found for "${rawQuery}" in ${idx.iocsIndexed || 0} indexed IOC(s).`
+               : `No matches yet. Your Pinata index looks empty — run reindex to populate it, then try again.`;
+             setSearchResults([
+               {
+                 ioc: hint,
+                 iocIndex: null,
+                 batch: {
+                   batchId: null,
+                   network: 'Server index',
+                   networkIcon: '🗄️',
+                   chainId: null,
+                   cid: null,
+                   merkleRoot: null,
+                   timestamp: 0,
+                   approved: false,
+                   contributorHash: null,
+                   isPublic: true,
+                   confirmations: 0,
+                   disputes: 0,
+                   iocs: [],
+                   format: null,
+                   explorerUrl: null,
+                   registryAddress: null,
+                   governanceAddress: null
+                 },
+                 merkleProof: null,
+                 verified: null,
+                 source: 'pinata-search'
+               }
+             ]);
+           }
 
-      // Fallback: local in-memory search across fetched batches.
-      const query = rawQuery.toLowerCase();
-      const matches = [];
+           setLoading(false);
+           return;
+         }
 
-      allBatches.forEach(batch => {
-        batch.iocs.forEach((ioc, iocIndex) => {
-          if (ioc.toLowerCase().includes(query)) {
-            const leaves = batch.iocs.map(x => keccak256(x));
-            const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
-            const leaf = keccak256(ioc);
-            const proof = tree.getHexProof(leaf);
-
-            matches.push({
-              ioc: ioc,
-              iocIndex: iocIndex,
-              batch: batch,
-              merkleProof: proof,
-              verified: tree.verify(proof, leaf, batch.merkleRoot),
-              source: 'local-index'
-            });
-          }
-        });
-      });
-
-      setSearchResults(matches);
-      setLoading(false);
+         throw new Error(json?.error || 'Search failed');
+       } catch (e) {
+         setSearchResults([
+           {
+             ioc: `Search error: ${String(e?.message || e)}`,
+             iocIndex: null,
+             batch: {
+               batchId: null,
+               network: 'Server index',
+               networkIcon: '🗄️',
+               chainId: null,
+               cid: null,
+               merkleRoot: null,
+               timestamp: 0,
+               approved: false,
+               contributorHash: null,
+               isPublic: true,
+               confirmations: 0,
+               disputes: 0,
+               iocs: [],
+               format: null,
+               explorerUrl: null,
+               registryAddress: null,
+               governanceAddress: null
+             },
+             merkleProof: null,
+             verified: null,
+             source: 'pinata-search'
+           }
+         ]);
+         setLoading(false);
+         return;
+       }
     })();
   };
 
