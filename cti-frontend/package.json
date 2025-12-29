@@ -12,6 +12,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.0",
     "autoprefixer": "^10.4.22",
+    "better-sqlite3": "^12.5.0",
     "circomlibjs": "^0.1.7",
     "ethers": "^6.15.0",
     "framer-motion": "^12.23.24",

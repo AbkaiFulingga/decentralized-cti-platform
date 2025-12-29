@@ -491,32 +491,81 @@ export default function EnhancedIOCSearch() {
       return;
     }
 
-    setLoading(true);
-    
-    const query = searchQuery.toLowerCase().trim();
-    const matches = [];
+    // Prefer server-side Pinata/SQLite search index (works even when L2 CIDs are not resolvable from logs).
+    // Fall back to client-side search across already-fetched batches.
+    (async () => {
+      setLoading(true);
+      const rawQuery = searchQuery.trim();
 
-    allBatches.forEach(batch => {
-      batch.iocs.forEach((ioc, iocIndex) => {
-        if (ioc.toLowerCase().includes(query)) {
-          const leaves = batch.iocs.map(x => keccak256(x));
-          const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
-          const leaf = keccak256(ioc);
-          const proof = tree.getHexProof(leaf);
-          
-          matches.push({
-            ioc: ioc,
-            iocIndex: iocIndex,
-            batch: batch,
-            merkleProof: proof,
-            verified: tree.verify(proof, leaf, batch.merkleRoot)
-          });
+      try {
+        const resp = await fetch(`/api/search?q=${encodeURIComponent(rawQuery)}&limit=50`);
+        const json = await resp.json();
+        if (json?.success && Array.isArray(json.results) && json.results.length) {
+          // Map server results into existing UI format. Proof verification is only available
+          // when we have a local batch with iocs+merkleRoot, so keep verified = null here.
+          const matches = json.results.map((r, idx) => ({
+            ioc: r.ioc,
+            iocIndex: null,
+            batch: {
+              batchId: null,
+              network: r.network || 'Pinata',
+              networkIcon: (r.network || '').toLowerCase().includes('ethereum') ? '🌐' : '⚡',
+              chainId: null,
+              cid: r.cid,
+              merkleRoot: null,
+              timestamp: 0,
+              approved: false,
+              contributorHash: null,
+              isPublic: true,
+              confirmations: 0,
+              disputes: 0,
+              iocs: [r.ioc],
+              format: 'cti-ioc-batch',
+              explorerUrl: null,
+              registryAddress: null,
+              governanceAddress: null,
+              _pinataSearchRank: idx
+            },
+            merkleProof: null,
+            verified: null,
+            source: 'pinata-search'
+          }));
+
+          setSearchResults(matches);
+          setLoading(false);
+          return;
         }
-      });
-    });
+      } catch (e) {
+        console.warn('⚠️  Pinata search unavailable, falling back to local batches:', e?.message || e);
+      }
 
-    setSearchResults(matches);
-    setLoading(false);
+      // Fallback: local in-memory search across fetched batches.
+      const query = rawQuery.toLowerCase();
+      const matches = [];
+
+      allBatches.forEach(batch => {
+        batch.iocs.forEach((ioc, iocIndex) => {
+          if (ioc.toLowerCase().includes(query)) {
+            const leaves = batch.iocs.map(x => keccak256(x));
+            const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+            const leaf = keccak256(ioc);
+            const proof = tree.getHexProof(leaf);
+
+            matches.push({
+              ioc: ioc,
+              iocIndex: iocIndex,
+              batch: batch,
+              merkleProof: proof,
+              verified: tree.verify(proof, leaf, batch.merkleRoot),
+              source: 'local-index'
+            });
+          }
+        });
+      });
+
+      setSearchResults(matches);
+      setLoading(false);
+    })();
   };
 
   const confirmBatch = async (batchId, network) => {
