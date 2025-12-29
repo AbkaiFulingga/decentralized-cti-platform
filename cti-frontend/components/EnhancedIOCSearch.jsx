@@ -36,10 +36,11 @@ export default function EnhancedIOCSearch() {
   }, []);
 
   useEffect(() => {
-    if (walletConnected) {
-      indexAllBatches();
-    }
-  }, [walletConnected]);
+    // Indexing/search is read-only; don't require a wallet connection.
+    // If a wallet is connected we'll still capture the address for voting actions.
+    indexAllBatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const checkConnection = async () => {
     if (window.ethereum) {
@@ -87,6 +88,13 @@ export default function EnhancedIOCSearch() {
     } catch (error) {
       alert('Failed to connect wallet');
     }
+  };
+
+  const reindexNow = async () => {
+    if (indexing) return;
+    setAllBatches([]);
+    setSearchResults([]);
+    await indexAllBatches();
   };
 
   const indexBatchesFromNetwork = async (network) => {
@@ -455,25 +463,22 @@ export default function EnhancedIOCSearch() {
           <p className="text-gray-400">Keyword search across all batches on L1 and L2</p>
         </div>
 
-        {!walletConnected ? (
-          <div className="text-center py-12">
-            <div className="mb-6">
-              <div className="w-20 h-20 mx-auto bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center mb-4">
-                <span className="text-4xl">🔐</span>
+        <>
+          {!walletConnected && (
+            <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between gap-4">
+              <div>
+                <p className="text-yellow-300 font-semibold">Wallet not connected</p>
+                <p className="text-gray-400 text-sm">You can still index and search. Connect MetaMask only if you want to vote (confirm/dispute).</p>
               </div>
-              <h3 className="text-2xl font-bold text-white mb-2">Connect Your Wallet</h3>
-              <p className="text-gray-400">Connect MetaMask to search IOCs</p>
+              <button
+                onClick={connectWallet}
+                className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-lg text-sm transition-all"
+              >
+                Connect
+              </button>
             </div>
-            
-            <button
-              onClick={connectWallet}
-              className="px-8 py-4 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold rounded-xl transition-all transform hover:scale-105 shadow-lg"
-            >
-              Connect MetaMask Wallet
-            </button>
-          </div>
-        ) : (
-          <>
+          )}
+
             {indexing && (
               <div className="mb-6 p-6 bg-blue-500/10 border border-blue-500/30 rounded-xl">
                 <div className="flex items-center gap-4">
@@ -509,7 +514,7 @@ export default function EnhancedIOCSearch() {
                     </div>
                   </div>
                   <button
-                    onClick={indexAllBatches}
+                    onClick={reindexNow}
                     disabled={indexing}
                     className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-sm transition-all"
                   >
@@ -793,7 +798,6 @@ export default function EnhancedIOCSearch() {
               </div>
             </div>
           </>
-        )}
       </div>
     </div>
   );
