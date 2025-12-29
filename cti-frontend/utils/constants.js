@@ -25,7 +25,7 @@ export const NETWORKS = {
     name: "Arbitrum Sepolia",
     rpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
     explorerUrl: "https://sepolia.arbiscan.io",
-    deploymentBlock: 96000000, // Approximate - adjust if contracts deployed earlier
+    deploymentBlock: 215861533, // From deployments/merkle-zk-arbitrum.json (main registry deploy block)
     nativeCurrency: {
       name: "Arbitrum ETH",
       symbol: "ETH",

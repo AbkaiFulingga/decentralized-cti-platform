@@ -185,6 +185,73 @@ export async function GET(request) {
     ? Math.min(defaults.delayMs, 120)
     : defaults.delayMs;
 
+  // L1-only optimization (Sepolia): if the registry exposes getBatchCID(), we can build
+  // a CID map without relying on event logs (eth_getLogs), which can be slow/unreliable.
+  // This is intentionally NOT used on Arbitrum to avoid changing L2 behavior.
+  if (Number(chainId) === 11155111) {
+    try {
+      const l1Abi = [
+        'function getBatchCount() public view returns (uint256)',
+        'function getBatchCID(uint256 index) external view returns (string)'
+      ];
+      const l1Registry = new ethers.Contract(registryAddress, l1Abi, provider);
+      const count = Number(await l1Registry.getBatchCount());
+
+      // If we already have some cached CIDs, only fill missing.
+      let cidMap = existing?.cidMap || {};
+      const missing = [];
+      for (let i = 0; i < count; i++) {
+        if (!cidMap[String(i)]) missing.push(i);
+      }
+
+      // Respect maxBlocks as a work budget: treat it as "max indices" here.
+      // (maxBlocks is conceptually blocks, but for this mode it's a throttle knob.)
+      const maxIndices = Math.max(1, Math.min(missing.length, Math.floor(Math.max(1, maxBlocks) / 25)));
+      const slice = missing.slice(Math.max(0, missing.length - maxIndices));
+
+      for (const i of slice) {
+        try {
+          const cid = await l1Registry.getBatchCID(i);
+          if (typeof cid === 'string' && cid.length) {
+            cidMap[String(i)] = cid;
+          }
+        } catch {
+          // ignore
+        }
+        await sleep(25);
+      }
+
+      const newEntry = {
+        cidMap,
+        lastScannedBlock: latestBlock,
+        latestKnownBlock: latestBlock,
+        updatedAt: Date.now()
+      };
+      CACHE.maps.set(cacheKey, newEntry);
+
+      return NextResponse.json({
+        success: true,
+        cached: false,
+        cidMap,
+        meta: {
+          chainId,
+          registryAddress,
+          mode: 'l1-view-getBatchCID',
+          latestBlock,
+          batchCount: count,
+          cidCount: Object.keys(cidMap || {}).length,
+          elapsedMs: Date.now() - t0
+        }
+      });
+    } catch (e) {
+      // If Sepolia registry isn't upgraded yet, fall back to event scan below.
+      console.warn('[cid-map] Sepolia getBatchCID unavailable; falling back to event scan', {
+        registry: registryAddress,
+        error: String(e?.message || e)
+      });
+    }
+  }
+
   // BatchAdded(uint256 indexed index, string cid, ...)
   const abi = [
     'event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)'
@@ -193,7 +260,11 @@ export async function GET(request) {
   const filter = registry.filters.BatchAdded();
 
   let cidMap = existing?.cidMap || {};
-  let start = existing?.lastScannedBlock ? Math.max(existing.lastScannedBlock + 1, deploymentBlock) : deploymentBlock;
+  // Start from the next unscanned block, but never before deploymentBlock.
+  // If deploymentBlock changes between deploys, this guarantees we don't miss early events.
+  let start = existing?.lastScannedBlock
+    ? Math.min(Math.max(existing.lastScannedBlock + 1, deploymentBlock), latestBlock)
+    : deploymentBlock;
   if (!start || Number.isNaN(start)) start = 0;
 
   // Don't scan from 0 accidentally.

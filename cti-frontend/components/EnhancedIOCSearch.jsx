@@ -6,7 +6,6 @@ import { ethers } from 'ethers';
 import { MerkleTree } from 'merkletreejs';
 import keccak256 from 'keccak256';
 import { NETWORKS } from '../utils/constants';
-import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers';
 
 export default function EnhancedIOCSearch() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -108,6 +107,8 @@ export default function EnhancedIOCSearch() {
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
         "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)",
+        // L1-only upgrade (Sepolia): allow reading plaintext CID without relying on logs.
+        "function getBatchCID(uint256 index) external view returns (string)",
         // Some deployments expose the full batch struct via a public mapping.
         "function batches(uint256) public view returns (bytes32 cidCommitment, string ipfsCID, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmationCount, uint256 falsePositiveReports, bytes32 merkleRootHash)",
         "event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)"
@@ -160,13 +161,12 @@ export default function EnhancedIOCSearch() {
         const blocksBack = network.chainId === 11155111 ? 50_000 : 2_000_000;
         const recentStartBlock = Math.max(0, latestBlock - blocksBack);
         const startBlock = Math.max(network.deploymentBlock || 0, recentStartBlock);
-        const events = await smartQueryEvents(registry, filter, startBlock, latestBlock, provider, {
-          deploymentBlock: network.deploymentBlock,
-          ...getEventQueryDefaults(network)
-        });
+        // IMPORTANT: stay on the same provider/network; do not use Infura helpers that may target mainnet.
+        // Keep this bounded to a recent window to avoid provider limits.
+        const events = await registry.queryFilter(filter, startBlock, latestBlock);
         console.log(`✅ [${network.name}] Retrieved ${events.length} events`);
         events.forEach(event => {
-          cidMap[Number(event.args.index)] = event.args.cid;
+          cidMap[String(Number(event.args.index))] = event.args.cid;
         });
       }
       
@@ -204,8 +204,25 @@ export default function EnhancedIOCSearch() {
             falsePositives: Number(batch.falsePositives)
           });
           
+          // CID resolution order:
+          // 1) L1-only view (getBatchCID) if deployed
+          // 2) cidMap (from /api/cid-map)
+          // 3) batches(i).ipfsCID (some deployments)
+          // 4) small per-index event scan fallback
+
+          let viewCid = null;
+          try {
+            // Only call on Sepolia to avoid touching L2 behavior.
+            if (network.chainId === 11155111) {
+              const c = await registry.getBatchCID(i);
+              if (typeof c === 'string' && c.length) viewCid = c;
+            }
+          } catch {
+            // ignore; method may not exist on older deployments
+          }
+
           // cidMap comes from JSON so keys might be strings; check both forms.
-          const cid = cidMap[i] || cidMap[String(i)];
+          const cid = viewCid || cidMap[i] || cidMap[String(i)];
 
           // Fallback #1: some deployments store CID on-chain at batches(index).ipfsCID.
           let onchainCid = null;
@@ -226,10 +243,8 @@ export default function EnhancedIOCSearch() {
               const latestBlock = await provider.getBlockNumber();
               const blocksBack = network.chainId === 11155111 ? 250_000 : 3_000_000;
               const fromBlock = Math.max(network.deploymentBlock || 0, Math.max(0, latestBlock - blocksBack));
-              const events = await smartQueryEvents(registry, filter, fromBlock, latestBlock, provider, {
-                deploymentBlock: network.deploymentBlock,
-                ...getEventQueryDefaults(network)
-              });
+              // Direct query on the current provider. Boundaries are already conservative.
+              const events = await registry.queryFilter(filter, fromBlock, latestBlock);
               if (events?.length) {
                 const ev = events[events.length - 1];
                 if (ev?.args?.cid && typeof ev.args.cid === 'string') {

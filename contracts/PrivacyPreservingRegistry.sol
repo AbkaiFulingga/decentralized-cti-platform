@@ -183,7 +183,7 @@ contract PrivacyPreservingRegistry is Ownable {
         bool isPublic,
         bytes32 zkpCommitment,
         bytes memory zkpProof
-    ) public payable {
+    ) public payable virtual {
         bytes32 contributorHash;
         
         // Compute CID commitment for on-chain storage
