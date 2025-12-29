@@ -143,7 +143,11 @@ export default function EnhancedIOCSearch() {
           rpcUrl: network.rpcUrl,
           registry: network.contracts.registry,
           deploymentBlock: String(network.deploymentBlock || 0),
-          maxBlocks: network.chainId === 11155111 ? '2000' : '20000',
+          // L2 note: Arbitrum Sepolia has very large block heights. A 20k scan budget is usually
+          // nowhere near enough to cover the deploy->now range, and many RPCs also don't provide
+          // reliable logs. We still call the endpoint (it may have a warmed cache), but we don't
+          // depend on it.
+          maxBlocks: network.chainId === 11155111 ? '2000' : '5000000',
           allowStale: '1'
         });
         const resp = await fetch(`/api/cid-map?${params.toString()}`);
@@ -260,14 +264,59 @@ export default function EnhancedIOCSearch() {
 
           const resolvedCid = cid || onchainCid || eventCid;
 
+          // IMPORTANT UX: on Arbitrum we often cannot resolve the plaintext CID without reliable logs.
+          // Do NOT skip the batch entirely; keep it in state so the UI can show "batch exists but CID
+          // unavailable" instead of showing 0 indexed.
           if (!resolvedCid) {
-            console.warn(`   ⚠️  No CID found for batch ${i} (cid-map missing), skipping`);
+            indexed.push({
+              batchId: i,
+              network: network.name,
+              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+              chainId: network.chainId,
+              cid: null,
+              cidStatus: 'missing',
+              cidReason: 'CID could not be resolved (no on-chain plaintext CID and logs unavailable).',
+              merkleRoot: batch.merkleRoot,
+              timestamp: Number(batch.timestamp),
+              approved: batch.accepted,
+              contributorHash: batch.contributorHash,
+              isPublic: batch.isPublic,
+              confirmations: Number(batch.confirmations),
+              disputes: Number(batch.falsePositives),
+              iocs: [],
+              format: null,
+              explorerUrl: network.explorerUrl,
+              registryAddress: network.contracts.registry,
+              governanceAddress: network.contracts.governance
+            });
+            console.warn(`   ⚠️  No CID found for batch ${i} (keeping placeholder)`);
             continue;
           }
           
           // Validate CID format (should start with 'Qm' or 'bafy' for IPFS, not '0x')
           if (resolvedCid.startsWith('0x') || resolvedCid === '0x0000000000000000000000000000000000000000000000000000000000000100') {
             console.warn(`   ⚠️  Invalid CID format for batch ${i}: ${resolvedCid.slice(0, 20)}... (looks like a hash, not an IPFS CID)`);
+            indexed.push({
+              batchId: i,
+              network: network.name,
+              networkIcon: network.name.includes('Ethereum') ? '🌐' : '⚡',
+              chainId: network.chainId,
+              cid: null,
+              cidStatus: 'invalid',
+              cidReason: 'Resolved CID value looks like a hash, not a CID.',
+              merkleRoot: batch.merkleRoot,
+              timestamp: Number(batch.timestamp),
+              approved: batch.accepted,
+              contributorHash: batch.contributorHash,
+              isPublic: batch.isPublic,
+              confirmations: Number(batch.confirmations),
+              disputes: Number(batch.falsePositives),
+              iocs: [],
+              format: null,
+              explorerUrl: network.explorerUrl,
+              registryAddress: network.contracts.registry,
+              governanceAddress: network.contracts.governance
+            });
             continue;
           }
           
