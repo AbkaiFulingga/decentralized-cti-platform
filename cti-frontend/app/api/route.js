@@ -1,4 +1,7 @@
-// app/api/contributor-tree/route.js
+// app/api/route.js
+//
+// NOTE: This route reads the contributor merkle tree JSON from disk.
+// It must be resilient to the file being temporarily empty or mid-write.
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
@@ -19,7 +22,25 @@ export async function GET() {
     
     // Read tree data
     const treeDataRaw = fs.readFileSync(treePath, 'utf8');
-    const treeData = JSON.parse(treeDataRaw);
+    if (!treeDataRaw || !treeDataRaw.trim()) {
+      return NextResponse.json({
+        success: false,
+        error: 'Contributor tree file is empty (likely mid-update). Please retry.',
+        hint: 'Wait a few seconds and refresh. If it persists, re-run the tree builder.'
+      }, { status: 503 });
+    }
+
+    let treeData;
+    try {
+      treeData = JSON.parse(treeDataRaw);
+    } catch (e) {
+      return NextResponse.json({
+        success: false,
+        error: 'Contributor tree JSON is invalid (likely mid-update). Please retry.',
+        hint: 'Wait a few seconds and refresh. If it persists, re-run the tree builder.',
+        details: String(e?.message || e)
+      }, { status: 503 });
+    }
     
     // Calculate freshness
     const ageMs = Date.now() - treeData.timestamp;
