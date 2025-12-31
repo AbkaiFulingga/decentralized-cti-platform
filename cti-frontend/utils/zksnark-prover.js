@@ -222,6 +222,38 @@ export class ZKSnarkProver {
   }
 
   /**
+   * Compute a Poseidon Merkle root in JS using the same left/right selection
+   * as the circom `MerkleTreeInclusionProof` template.
+   *
+   * Circuit logic per level i:
+   *   if pathIndex == 0: hash(left=current, right=pathElement)
+   *   if pathIndex == 1: hash(left=pathElement, right=current)
+   */
+  async _computeMerkleRootFromProof({ leaf, pathElements, pathIndices }) {
+    const poseidon = await this.buildPoseidon();
+
+    let cur = ethers.toBigInt(leaf);
+    const n = Math.min(pathElements.length, pathIndices.length);
+
+    for (let i = 0; i < n; i++) {
+      const sib = ethers.toBigInt(pathElements[i]);
+      const idx = Number(pathIndices[i]);
+      if (idx !== 0 && idx !== 1) {
+        throw new Error(`Invalid Merkle path index at depth ${i}: ${pathIndices[i]} (expected 0/1)`);
+      }
+
+      const left = idx === 0 ? cur : sib;
+      const right = idx === 0 ? sib : cur;
+
+      const out = poseidon([left, right]);
+      const outDec = poseidon.F.toString(out);
+      cur = BigInt(outDec);
+    }
+
+    return cur; // BigInt (field element)
+  }
+
+  /**
    * Load contributor Merkle tree from backend API
    * ✅ FIX: Comprehensive validation and error handling
    */
@@ -377,12 +409,14 @@ export class ZKSnarkProver {
     
     logger.log('✅ Using precomputed Poseidon proof (depth:', proofData.proof.length, ')');
     
-    // Generate path indices from leaf index (binary representation)
+    // Generate path indices from leaf index (binary representation, low-bit first).
+    // Circuit iterates i=0..levels-1, so indices must align with proof element order.
+    // We generate indices for the whole circuit depth (20) and the caller may slice/pad.
     const pathIndices = [];
     let idx = leafIndex;
-    for (let i = 0; i < proofData.proof.length; i++) {
-      pathIndices.push(idx % 2);
-      idx = Math.floor(idx / 2);
+    for (let i = 0; i < ZKSnarkProver.MERKLE_TREE_LEVELS; i++) {
+      pathIndices.push(Number(idx & 1));
+      idx = idx >> 1;
     }
     
     // ✅ FIX: Validate all required fields exist
@@ -505,7 +539,7 @@ export class ZKSnarkProver {
       // ✅ FIX: Use class constant instead of magic number
       const LEVELS = ZKSnarkProver.MERKLE_TREE_LEVELS;
       
-      // Convert and pad Merkle proof
+      // Convert and normalize Merkle proof to circuit depth
       const paddedProof = merkleProofData.pathElements.map(p => {
         try {
           return ethers.toBigInt(p);
@@ -513,13 +547,44 @@ export class ZKSnarkProver {
           throw new Error(`Invalid path element: ${p}`);
         }
       });
-      
+
+      // Indices are generated as an array of length 20 in getMerkleProof().
+      // Keep them aligned with the circuit depth.
       const paddedIndices = [...merkleProofData.pathIndices];
+
+      // If the proof array is longer than the circuit depth, truncate both.
+      if (paddedProof.length > LEVELS) {
+        paddedProof.splice(LEVELS);
+      }
+      if (paddedIndices.length > LEVELS) {
+        paddedIndices.splice(LEVELS);
+      }
       
       // Pad with zeros to reach required depth
       while (paddedProof.length < LEVELS) {
         paddedProof.push(0n);
+        // When padding siblings past the real tree height, the index doesn't matter.
+        // Keep it 0 for determinism.
         paddedIndices.push(0);
+      }
+
+      // ✅ Extra diagnostic: recompute root exactly like the circuit does.
+      // If this fails, the circom assert at line ~97 is guaranteed to fail too.
+      const jsComputedRoot = await this._computeMerkleRootFromProof({
+        leaf: addressBigInt,
+        pathElements: paddedProof,
+        pathIndices: paddedIndices
+      });
+      const expectedRoot = ethers.toBigInt(contributorTreeRoot);
+      if (jsComputedRoot !== expectedRoot) {
+        const computedHex = '0x' + jsComputedRoot.toString(16).padStart(64, '0');
+        throw new Error(
+          'Merkle proof does not verify (JS recompute mismatch). ' +
+          'This will trigger circom assert at merkleRoot === merkleChecker.root.\n' +
+          `  computedRoot: ${computedHex}\n` +
+          `  expectedRoot: ${contributorTreeRoot}\n` +
+          `  note: likely pathIndices order/bit-endianness or proof element ordering mismatch.`
+        );
       }
       
       // ✅ FIX: Validate all circuit inputs before proof generation
