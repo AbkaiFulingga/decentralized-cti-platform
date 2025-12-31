@@ -5,6 +5,42 @@
 
 set -e  # Exit on error
 
+# Optional: copy generated artifacts into the Next.js app's public folder so the
+# browser prover can fetch them from:
+#   /circuits/contributor-proof.wasm
+#   /circuits/contributor-proof_final.zkey
+#   /circuits/verification_key.json
+#
+# Usage:
+#   ./setup-circuit.sh --deploy-to-frontend
+#   ./setup-circuit.sh --deploy-to-frontend /absolute/path/to/cti-frontend/public/circuits
+
+DEPLOY_TO_FRONTEND=0
+DEPLOY_DIR_OVERRIDE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --deploy-to-frontend)
+            DEPLOY_TO_FRONTEND=1
+            shift
+            ;;
+        --deploy-dir)
+            DEPLOY_TO_FRONTEND=1
+            DEPLOY_DIR_OVERRIDE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--deploy-to-frontend] [--deploy-dir /abs/path/to/public/circuits]"
+            exit 0
+            ;;
+        *)
+            echo -e "${YELLOW}⚠️  Unknown argument: $1${NC}"
+            echo "Usage: $0 [--deploy-to-frontend] [--deploy-dir /abs/path/to/public/circuits]"
+            exit 1
+            ;;
+    esac
+done
+
 echo "═══════════════════════════════════════════════════════"
 echo "🔐 zkSNARK Circuit Setup - Contributor Proof"
 echo "═══════════════════════════════════════════════════════"
@@ -45,6 +81,31 @@ echo ""
 
 # Navigate to circuits directory
 cd "$(dirname "$0")"
+
+SCRIPT_DIR="$(pwd)"
+
+detect_frontend_public_dir() {
+    # Allow explicit override.
+    if [ -n "$DEPLOY_DIR_OVERRIDE" ]; then
+        echo "$DEPLOY_DIR_OVERRIDE"
+        return 0
+    fi
+
+    # Typical repo layout: <repo>/circuits (this script) and <repo>/cti-frontend/public/circuits.
+    local repo_root
+    repo_root="$(cd .. && pwd)"
+
+    if [ -d "${repo_root}/cti-frontend/public" ]; then
+        echo "${repo_root}/cti-frontend/public/circuits"
+        return 0
+    fi
+
+    # If someone runs the script from a copied circuits folder outside the repo,
+    # try a best-effort hint based on current working directory.
+    # Fall back to empty string and warn later.
+    echo ""
+    return 0
+}
 
 # Step 1: Compile circuit
 echo "─────────────────────────────────────────────────────────"
@@ -253,3 +314,39 @@ echo ""
 echo "💡 To test proof generation:"
 echo "   node ../scripts/generate-zk-proof.js --test"
 echo ""
+
+# Optional: Deploy artifacts into Next.js public folder
+if [ "$DEPLOY_TO_FRONTEND" -eq 1 ]; then
+    echo "─────────────────────────────────────────────────────────"
+    echo "📦 Optional: Deploying circuit artifacts to frontend"
+    echo "─────────────────────────────────────────────────────────"
+
+    FRONTEND_PUBLIC_CIRCUITS="$(detect_frontend_public_dir)"
+    if [ -z "$FRONTEND_PUBLIC_CIRCUITS" ]; then
+        echo -e "${RED}❌ Could not auto-detect frontend public directory.${NC}"
+        echo "   Re-run with: --deploy-dir /absolute/path/to/cti-frontend/public/circuits"
+        echo ""
+        exit 1
+    fi
+
+    mkdir -p "$FRONTEND_PUBLIC_CIRCUITS"
+
+    # Copy and normalize filenames to what the browser prover expects.
+    cp -f "${SCRIPT_DIR}/contributor-proof_js/contributor-proof.wasm" \
+        "${FRONTEND_PUBLIC_CIRCUITS}/contributor-proof.wasm"
+    cp -f "${SCRIPT_DIR}/contributor-proof_final.zkey" \
+        "${FRONTEND_PUBLIC_CIRCUITS}/contributor-proof_final.zkey"
+    cp -f "${SCRIPT_DIR}/verification_key.json" \
+        "${FRONTEND_PUBLIC_CIRCUITS}/verification_key.json"
+
+    echo -e "${GREEN}✅ Deployed artifacts into:${NC} ${FRONTEND_PUBLIC_CIRCUITS}"
+    echo ""
+    echo "📎 Expected served URLs (Next public assets):"
+    echo "   /circuits/contributor-proof.wasm"
+    echo "   /circuits/contributor-proof_final.zkey"
+    echo "   /circuits/verification_key.json"
+    echo ""
+    echo "📏 Deployed file sizes:"
+    ls -lh "${FRONTEND_PUBLIC_CIRCUITS}" | sed 's/^/   /'
+    echo ""
+fi
