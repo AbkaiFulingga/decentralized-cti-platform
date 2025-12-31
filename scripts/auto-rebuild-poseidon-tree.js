@@ -172,9 +172,16 @@ async function buildPoseidonMerkleTree(contributors) {
   const poseidon = await initPoseidon();
   const F = poseidon.F;
   
-  // Convert addresses to BigInt leaves
-  const leaves = contributors.map(addr => ethers.toBigInt(addr));
-  console.log(`✅ Converted ${leaves.length} addresses to BigInt leaves`);
+  // IMPORTANT: Leaf semantics must match the zk circuit.
+  // The circuit uses: leaf = Poseidon(1)(address)
+  // See `circuits/contributor-proof.circom`.
+  const addressBigInts = contributors.map((addr) => ethers.toBigInt(addr));
+  const leaves = addressBigInts.map((a) => {
+    const out = poseidon([a]);
+    // Convert field element to BigInt deterministically.
+    return BigInt(F.toString(out));
+  });
+  console.log(`✅ Computed ${leaves.length} Poseidon(address) leaves`);
 
   // Pad to full tree depth
   const targetSize = Math.pow(2, TREE_DEPTH);
@@ -232,6 +239,7 @@ async function buildPoseidonMerkleTree(contributors) {
     
     proofsData.push({
       address: contributors[leafIndex],
+      // Store the actual leaf value used in the tree (Poseidon(address)).
       leaf: '0x' + leaves[leafIndex].toString(16).padStart(64, '0'),
       proof: proof, // 20 siblings (padded)
       pathIndices: pathIndices // 20 bits
@@ -249,6 +257,7 @@ async function buildPoseidonMerkleTree(contributors) {
 
   return {
     root: root,
+    // Leaves are Poseidon(address) values (not raw addresses).
     leaves: leaves.map(l => '0x' + l.toString(16).padStart(64, '0')),
     contributors: contributors.map(a => a.toLowerCase()),
     contributorCount: contributors.length,
