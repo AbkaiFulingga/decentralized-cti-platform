@@ -409,15 +409,20 @@ export class ZKSnarkProver {
     
     logger.log('✅ Using precomputed Poseidon proof (depth:', proofData.proof.length, ')');
     
-    // Generate path indices from leaf index (binary representation, low-bit first).
-    // Circuit iterates i=0..levels-1, so indices must align with proof element order.
-    // We generate indices for the whole circuit depth (20) and the caller may slice/pad.
-    const pathIndices = [];
-    let idx = leafIndex;
-    for (let i = 0; i < ZKSnarkProver.MERKLE_TREE_LEVELS; i++) {
-      pathIndices.push(Number(idx & 1));
-      idx = idx >> 1;
-    }
+    // Prefer the precomputed `pathIndices` from the Poseidon tree builder.
+    // That builder knows the exact left/right orientation used when hashing.
+    // Fallback: derive bits from leafIndex (low-bit first).
+    const pathIndices = Array.isArray(proofData.pathIndices)
+      ? proofData.pathIndices.map((v) => Number(v))
+      : (() => {
+          const bits = [];
+          let idx = leafIndex;
+          for (let i = 0; i < ZKSnarkProver.MERKLE_TREE_LEVELS; i++) {
+            bits.push(Number(idx & 1));
+            idx = idx >> 1;
+          }
+          return bits;
+        })();
     
     // ✅ FIX: Validate all required fields exist
     const result = {

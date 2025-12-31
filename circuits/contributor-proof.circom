@@ -88,8 +88,15 @@ template ContributorProof(merkleTreeLevels) {
     commitment === commitmentHasher.out;
 
     // Verify address is in Merkle tree
+    // NOTE: The Poseidon contributor tree stores leaves as Poseidon([address]).
+    // This matches `scripts/auto-rebuild-poseidon-tree.js` which computes
+    // `leaves[i] = Poseidon([addressBigInt])` and then builds the tree with Poseidon(2).
+    // Therefore the circuit must hash the private `address` into the leaf.
+    component leafHasher = Poseidon(1);
+    leafHasher.inputs[0] <== address;
+
     component merkleChecker = MerkleTreeInclusionProof(merkleTreeLevels);
-    merkleChecker.leaf <== address;
+    merkleChecker.leaf <== leafHasher.out;
     for (var i = 0; i < merkleTreeLevels; i++) {
         merkleChecker.pathElements[i] <== merkleProof[i];
         merkleChecker.pathIndices[i] <== merklePathIndices[i];
