@@ -5,7 +5,13 @@ const fs = require("fs");
 async function main() {
   console.log("=== Admin Contributor Status Check ===\n");
   
-  const testData = JSON.parse(fs.readFileSync("test-addresses.json"));
+  // Prefer the correct deployment file based on the network.
+  // This script is commonly used on both Sepolia and Arbitrum Sepolia.
+  const networkName = hre.network.name;
+  const deploymentFile = networkName === "arbitrumSepolia"
+    ? "test-addresses-arbitrum.json"
+    : "test-addresses.json";
+  const testData = JSON.parse(fs.readFileSync(deploymentFile));
   const registry = await hre.ethers.getContractAt(
     "PrivacyPreservingRegistry",
     testData.PrivacyPreservingRegistry

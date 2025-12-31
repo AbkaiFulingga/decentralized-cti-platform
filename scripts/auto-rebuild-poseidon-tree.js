@@ -12,6 +12,7 @@ const CHECK_INTERVAL = 60000; // Check every 60 seconds (DIRECTION1 specificatio
 const OUTPUT_FILE = path.join(__dirname, '..', 'contributor-merkle-tree.json');
 const FRONTEND_FILE = path.join(__dirname, '..', 'cti-frontend', 'public', 'contributor-merkle-tree.json');
 const DEPLOYMENT_FILE_L2 = path.join(__dirname, '..', 'test-addresses-arbitrum.json');
+const DEPLOYMENT_FILE_L1 = path.join(__dirname, '..', 'test-addresses.json');
 const TREE_DEPTH = 20; // Supports 1,048,576 contributors (DIRECTION1 specification)
 
 let lastContributorCount = 0;
@@ -29,8 +30,12 @@ async function initPoseidon() {
 
 async function getRegistryContract() {
   try {
-    // Load L2 deployment addresses (anonymous mode only on Arbitrum)
-    const deploymentData = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE_L2, 'utf8'));
+    // Load deployment addresses based on the current network.
+    // The rebuilder is intended for Arbitrum Sepolia (anonymous mode), but this keeps it resilient.
+    const deploymentPath = (ethers.network && ethers.network.name === 'arbitrumSepolia')
+      ? DEPLOYMENT_FILE_L2
+      : DEPLOYMENT_FILE_L1;
+    const deploymentData = JSON.parse(fs.readFileSync(deploymentPath, 'utf8'));
     const registryAddress = deploymentData.PrivacyPreservingRegistry;
 
     if (!registryAddress) {
@@ -104,6 +109,45 @@ async function fetchAllContributors(registry) {
     console.error('❌ Failed to fetch contributors:', error.message);
     throw error;
   }
+}
+
+// Fallback contributor enumeration when events are unavailable.
+// On some networks/providers, queryFilter may return 0 due to ABI mismatches or limited history.
+// If the registry exposes getPlatformStats(), we can at least detect a non-zero contributor count.
+// If it exposes enumerate-like helpers in the future, this is where we'd plug them in.
+async function fetchContributorsFallback(registry) {
+  console.log('🛟 Event index produced 0 results. Trying fallback enumeration...');
+
+  // 1) If the contract has getPlatformStats and reports 0 contributors, we can stop.
+  try {
+    if (typeof registry.getPlatformStats === 'function') {
+      const stats = await registry.getPlatformStats();
+      // stats[4] is documented in repo scripts as "Total Contributors (all tiers)"
+      const total = Number(stats?.[4] ?? 0);
+      console.log(`ℹ️  Registry reports total contributors: ${total}`);
+      if (total === 0) return [];
+    }
+  } catch (e) {
+    console.log(`⚠️  getPlatformStats() fallback unavailable: ${e.message}`);
+  }
+
+  // 2) As a last-resort (until the registry adds an enumerator), keep existing proofs if present.
+  // This doesn't *fix* stale/invalid files on its own, but avoids hard failures when the file is missing.
+  try {
+    if (fs.existsSync(OUTPUT_FILE)) {
+      const existing = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
+      const existingContributors = existing?.contributors;
+      if (Array.isArray(existingContributors) && existingContributors.length > 0) {
+        console.log(`ℹ️  Reusing ${existingContributors.length} contributors from existing file as fallback.`);
+        return existingContributors;
+      }
+    }
+  } catch (e) {
+    console.log(`⚠️  Could not load existing contributor file: ${e.message}`);
+  }
+
+  console.log('❌ No fallback contributor source available.');
+  return [];
 }
 
 async function buildPoseidonMerkleTree(contributors) {
@@ -270,7 +314,10 @@ async function checkAndRebuild() {
     console.log(`${'='.repeat(70)}\n`);
 
     // Fetch contributors from on-chain events
-    const contributors = await fetchAllContributors(registry);
+    let contributors = await fetchAllContributors(registry);
+    if (contributors.length === 0) {
+      contributors = await fetchContributorsFallback(registry);
+    }
     
     if (contributors.length === 0) {
       console.log('⚠️  No contributors found, skipping tree build');
