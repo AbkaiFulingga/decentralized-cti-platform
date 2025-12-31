@@ -259,6 +259,17 @@ export class ZKSnarkProver {
   }
 
   /**
+   * The anonymity circuit hashes the private `address` into the Merkle leaf as:
+   *   leaf = Poseidon(1)(address)
+   * See `circuits/contributor-proof.circom` -> `leafHasher = Poseidon(1)`.
+   */
+  async _computeCircuitLeafFromAddress(addressBigInt) {
+    const poseidon = await this.buildPoseidon();
+    const out = poseidon([addressBigInt]);
+    return BigInt(poseidon.F.toString(out));
+  }
+
+  /**
    * Load contributor Merkle tree from backend API
    * ✅ FIX: Comprehensive validation and error handling
    */
@@ -560,6 +571,9 @@ export class ZKSnarkProver {
       // However, the backend can emit shorter proofs (e.g. depth 8). We'll pad deterministically.
       const proofDepth = merkleProofData.pathElements.length;
 
+  // Compute the circuit leaf (Poseidon(address)) — this is what the circuit uses internally.
+  const circuitLeaf = await this._computeCircuitLeafFromAddress(addressBigInt);
+
       if (!Array.isArray(merkleProofData.pathIndices) || merkleProofData.pathIndices.length === 0) {
         throw new Error(
           'Merkle path indices missing from contributor tree proof. ' +
@@ -603,10 +617,13 @@ export class ZKSnarkProver {
       // ✅ Extra diagnostic: recompute root exactly like the circuit does.
       // If this fails, the circom assert at line ~97 is guaranteed to fail too.
       const jsComputedRoot = await this._computeMerkleRootFromProof({
-        // The circuit leaf semantics are defined by the circuit/tree generator.
-        // If the tree JSON includes `leaf`, use it (most reliable).
-        // Prefer proofData.leaf (new schema) over tree.leaves[leafIndex] (legacy).
-        leaf: merkleProofData.leaf ? ethers.toBigInt(merkleProofData.leaf) : addressBigInt,
+        // The circuit proves inclusion of leafHasher(address) (Poseidon(1)).
+        // Some older/newer tree JSONs may include `leaf`, but that value can be
+        // either:
+        //   - raw address (legacy) OR
+        //   - Poseidon(address) (desired)
+        // To stay correct w.r.t the circuit, always use the circuitLeaf here.
+        leaf: circuitLeaf,
         // IMPORTANT: recompute using only the real proof depth, not padded zeros.
         pathElements: paddedProof.slice(0, proofDepth),
         pathIndices: paddedIndices.slice(0, proofDepth)
