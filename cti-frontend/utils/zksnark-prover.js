@@ -29,6 +29,11 @@ const CONFIG = {
   PROOF_GENERATION_TIMEOUT_MS: 60000 // 60 second timeout
 };
 
+// Circom circuit depth is fixed at build time (see `circuits/contributor-proof.circom` -> `ContributorProof(20)`).
+// The backend tree builder may choose to build a smaller tree (e.g., depth 8) for speed.
+// In that case, we MUST pad the proof/indices up to CIRCUIT_LEVELS so witness generation succeeds.
+const CIRCUIT_LEVELS = CONFIG.MERKLE_TREE_LEVELS;
+
 /**
  * Logger utility with configurable levels
  */
@@ -428,7 +433,8 @@ export class ZKSnarkProver {
     const result = {
       pathElements: proofData.proof,
       pathIndices: pathIndices,
-      leaf: this.contributorTree.leaves?.[leafIndex],
+      // New schema: proof includes `leaf` directly. Legacy schema: tree may include `leaves[]`.
+      leaf: proofData.leaf ?? this.contributorTree.leaves?.[leafIndex],
       root: this.contributorTree.root
     };
     
@@ -446,6 +452,15 @@ export class ZKSnarkProver {
       pathIndicesCount: result.pathIndices.length,
       root: result.root
     });
+
+    // Helpful warning when server emits smaller trees than the circuit expects.
+    // This is OK as long as we pad to CIRCUIT_LEVELS during witness generation.
+    if (result.pathElements.length !== CIRCUIT_LEVELS) {
+      logger.warn(
+        `⚠️  Merkle proof depth (${result.pathElements.length}) does not match circuit depth (${CIRCUIT_LEVELS}). ` +
+          'The prover will pad with zeros. If witness generation fails, regenerate the contributor tree or rebuild the circuit.'
+      );
+    }
     
     return result;
   }
@@ -540,13 +555,24 @@ export class ZKSnarkProver {
 
       // Step 4: Prepare circuit inputs
       logger.info('📋 Step 4/5: Preparing circuit inputs...');
-      
-  // Use the proof's depth as source-of-truth, so the backend/tree generator
-  // can change depth without breaking proof generation.
-  const LEVELS = merkleProofData.pathElements.length;
-      
-      // Convert and normalize Merkle proof to circuit depth
-      const paddedProof = merkleProofData.pathElements.map(p => {
+
+      // The circuit expects fixed-size arrays of length CIRCUIT_LEVELS.
+      // However, the backend can emit shorter proofs (e.g. depth 8). We'll pad deterministically.
+      const proofDepth = merkleProofData.pathElements.length;
+
+      if (!Array.isArray(merkleProofData.pathIndices) || merkleProofData.pathIndices.length === 0) {
+        throw new Error(
+          'Merkle path indices missing from contributor tree proof. ' +
+            'Rebuild the contributor tree JSON so each proof includes `pathIndices`.'
+        );
+      }
+
+      if (proofDepth === 0) {
+        throw new Error('Merkle proof is empty. Rebuild the contributor tree JSON.');
+      }
+
+      // Convert Merkle proof (siblings) to BigInt for internal checks.
+      const paddedProof = merkleProofData.pathElements.map((p) => {
         try {
           return ethers.toBigInt(p);
         } catch (error) {
@@ -554,23 +580,23 @@ export class ZKSnarkProver {
         }
       });
 
-      // Indices are generated as an array of length 20 in getMerkleProof().
-      // Keep them aligned with the circuit depth.
+      // Indices should exist; we keep them aligned with siblings.
       const paddedIndices = [...merkleProofData.pathIndices];
 
-      // If the proof array is longer than the circuit depth, truncate both.
-      if (paddedProof.length > LEVELS) {
-        paddedProof.splice(LEVELS);
-      }
-      if (paddedIndices.length > LEVELS) {
-        paddedIndices.splice(LEVELS);
-      }
-      
-      // Pad with zeros to reach required depth
-      while (paddedProof.length < LEVELS) {
+      // Truncate if a backend ever emits more than the circuit supports.
+      if (paddedProof.length > CIRCUIT_LEVELS) paddedProof.splice(CIRCUIT_LEVELS);
+      if (paddedIndices.length > CIRCUIT_LEVELS) paddedIndices.splice(CIRCUIT_LEVELS);
+
+      // Pad with zeros up to the circuit depth.
+      while (paddedProof.length < CIRCUIT_LEVELS) {
         paddedProof.push(0n);
         // When padding siblings past the real tree height, the index doesn't matter.
         // Keep it 0 for determinism.
+        paddedIndices.push(0);
+      }
+
+      // If the backend proofDepth is shorter, we should also ensure indices are padded.
+      while (paddedIndices.length < CIRCUIT_LEVELS) {
         paddedIndices.push(0);
       }
 
@@ -579,9 +605,11 @@ export class ZKSnarkProver {
       const jsComputedRoot = await this._computeMerkleRootFromProof({
         // The circuit leaf semantics are defined by the circuit/tree generator.
         // If the tree JSON includes `leaf`, use it (most reliable).
+        // Prefer proofData.leaf (new schema) over tree.leaves[leafIndex] (legacy).
         leaf: merkleProofData.leaf ? ethers.toBigInt(merkleProofData.leaf) : addressBigInt,
-        pathElements: paddedProof,
-        pathIndices: paddedIndices
+        // IMPORTANT: recompute using only the real proof depth, not padded zeros.
+        pathElements: paddedProof.slice(0, proofDepth),
+        pathIndices: paddedIndices.slice(0, proofDepth)
       });
       const expectedRoot = ethers.toBigInt(contributorTreeRoot);
       if (jsComputedRoot !== expectedRoot) {
@@ -596,12 +624,12 @@ export class ZKSnarkProver {
       }
       
       // ✅ FIX: Validate all circuit inputs before proof generation
-      if (paddedProof.length !== LEVELS) {
-        throw new Error(`Invalid proof length: ${paddedProof.length} (expected ${LEVELS})`);
+      if (paddedProof.length !== CIRCUIT_LEVELS) {
+        throw new Error(`Invalid proof length: ${paddedProof.length} (expected ${CIRCUIT_LEVELS})`);
       }
-      
-      if (paddedIndices.length !== LEVELS) {
-        throw new Error(`Invalid indices length: ${paddedIndices.length} (expected ${LEVELS})`);
+
+      if (paddedIndices.length !== CIRCUIT_LEVELS) {
+        throw new Error(`Invalid indices length: ${paddedIndices.length} (expected ${CIRCUIT_LEVELS})`);
       }
 
       const circuitInputs = {
@@ -622,7 +650,7 @@ export class ZKSnarkProver {
 
       logger.info('   ✅ Circuit inputs validated');
       logger.log(
-        `   - Proof depth: ${merkleProofData.pathElements.length} (padded to ${LEVELS})\n` +
+        `   - Proof depth: ${proofDepth} (padded to ${CIRCUIT_LEVELS})\n` +
         `   - Indices sample: ${paddedIndices.slice(0, 6).join(', ')}\n` +
         `   - Root (hex): ${contributorTreeRoot}\n` +
         `   - Root (dec): ${circuitInputs.merkleRoot}`
