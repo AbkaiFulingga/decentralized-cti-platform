@@ -541,8 +541,9 @@ export class ZKSnarkProver {
       // Step 4: Prepare circuit inputs
       logger.info('📋 Step 4/5: Preparing circuit inputs...');
       
-      // ✅ FIX: Use class constant instead of magic number
-      const LEVELS = ZKSnarkProver.MERKLE_TREE_LEVELS;
+  // Use the proof's depth as source-of-truth, so the backend/tree generator
+  // can change depth without breaking proof generation.
+  const LEVELS = merkleProofData.pathElements.length;
       
       // Convert and normalize Merkle proof to circuit depth
       const paddedProof = merkleProofData.pathElements.map(p => {
@@ -576,7 +577,9 @@ export class ZKSnarkProver {
       // ✅ Extra diagnostic: recompute root exactly like the circuit does.
       // If this fails, the circom assert at line ~97 is guaranteed to fail too.
       const jsComputedRoot = await this._computeMerkleRootFromProof({
-        leaf: addressBigInt,
+        // The circuit leaf semantics are defined by the circuit/tree generator.
+        // If the tree JSON includes `leaf`, use it (most reliable).
+        leaf: merkleProofData.leaf ? ethers.toBigInt(merkleProofData.leaf) : addressBigInt,
         pathElements: paddedProof,
         pathIndices: paddedIndices
       });
