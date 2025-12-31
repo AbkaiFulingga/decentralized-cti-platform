@@ -13,7 +13,13 @@ const OUTPUT_FILE = path.join(__dirname, '..', 'contributor-merkle-tree.json');
 const FRONTEND_FILE = path.join(__dirname, '..', 'cti-frontend', 'public', 'contributor-merkle-tree.json');
 const DEPLOYMENT_FILE_L2 = path.join(__dirname, '..', 'test-addresses-arbitrum.json');
 const DEPLOYMENT_FILE_L1 = path.join(__dirname, '..', 'test-addresses.json');
-const TREE_DEPTH = 20; // Supports 1,048,576 contributors (DIRECTION1 specification)
+// NOTE: Depth 20 (1,048,576 leaves) is expensive to rebuild frequently and can hit
+// memory/time limits on small servers. For the current platform scale we can
+// safely use a smaller depth and still be compatible with the circuit by
+// emitting exactly TREE_DEPTH siblings.
+// If you need to scale beyond this, bump this back to 20 and consider persisting
+// intermediate layers or using an incremental tree.
+const TREE_DEPTH = 8;
 
 let lastContributorCount = 0;
 let poseidonInstance = null;
@@ -164,13 +170,11 @@ async function buildPoseidonMerkleTree(contributors) {
   const leaves = contributors.map(addr => ethers.toBigInt(addr));
   console.log(`✅ Converted ${leaves.length} addresses to BigInt leaves`);
 
-  // Pad to full tree depth (2^20 = 1,048,576 leaves)
+  // Pad to full tree depth
   const targetSize = Math.pow(2, TREE_DEPTH);
   let currentLevel = [...leaves];
   
-  while (currentLevel.length < targetSize) {
-    currentLevel.push(0n); // Pad with zeros
-  }
+  while (currentLevel.length < targetSize) currentLevel.push(0n);
   console.log(`✅ Padded tree to ${targetSize} leaves (depth ${TREE_DEPTH})`);
 
   // Build tree level by level using Poseidon(2) hash
