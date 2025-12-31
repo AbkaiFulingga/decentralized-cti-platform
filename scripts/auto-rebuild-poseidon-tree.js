@@ -30,12 +30,9 @@ async function initPoseidon() {
 
 async function getRegistryContract() {
   try {
-    // Load deployment addresses based on the current network.
-    // The rebuilder is intended for Arbitrum Sepolia (anonymous mode), but this keeps it resilient.
-    const deploymentPath = (ethers.network && ethers.network.name === 'arbitrumSepolia')
-      ? DEPLOYMENT_FILE_L2
-      : DEPLOYMENT_FILE_L1;
-    const deploymentData = JSON.parse(fs.readFileSync(deploymentPath, 'utf8'));
+    // This rebuilder is dedicated to Arbitrum Sepolia (anonymous mode), so always read the L2 deployment file.
+    // Using Hardhat's default network ("hardhat"/localhost) would silently point at the wrong addresses.
+    const deploymentData = JSON.parse(fs.readFileSync(DEPLOYMENT_FILE_L2, 'utf8'));
     const registryAddress = deploymentData.PrivacyPreservingRegistry;
 
     if (!registryAddress) {
@@ -138,8 +135,15 @@ async function fetchContributorsFallback(registry) {
       const existing = JSON.parse(fs.readFileSync(OUTPUT_FILE, 'utf8'));
       const existingContributors = existing?.contributors;
       if (Array.isArray(existingContributors) && existingContributors.length > 0) {
-        console.log(`ℹ️  Reusing ${existingContributors.length} contributors from existing file as fallback.`);
-        return existingContributors;
+        // Old/legacy files may store an array of objects rather than strings.
+        const normalized = existingContributors
+          .map((c) => (typeof c === 'string' ? c : c?.address))
+          .filter((a) => typeof a === 'string' && a.startsWith('0x'))
+          .map((a) => a.toLowerCase());
+        if (normalized.length > 0) {
+          console.log(`ℹ️  Reusing ${normalized.length} contributors from existing file as fallback.`);
+          return normalized;
+        }
       }
     }
   } catch (e) {
