@@ -14,12 +14,18 @@ const FRONTEND_FILE = path.join(__dirname, '..', 'cti-frontend', 'public', 'cont
 const DEPLOYMENT_FILE_L2 = path.join(__dirname, '..', 'test-addresses-arbitrum.json');
 const DEPLOYMENT_FILE_L1 = path.join(__dirname, '..', 'test-addresses.json');
 // NOTE: Depth 20 (1,048,576 leaves) is expensive to rebuild frequently and can hit
-// memory/time limits on small servers. For the current platform scale we can
-// safely use a smaller depth and still be compatible with the circuit by
-// emitting exactly TREE_DEPTH siblings.
-// If you need to scale beyond this, bump this back to 20 and consider persisting
-// intermediate layers or using an incremental tree.
-const TREE_DEPTH = 8;
+// memory/time limits on small servers.
+// Keep the default small and make it configurable.
+const TREE_DEPTH = (() => {
+  const raw = process.env.POSEIDON_TREE_DEPTH;
+  if (!raw) return 8;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > 20) {
+    console.warn(`⚠️  Invalid POSEIDON_TREE_DEPTH="${raw}"; expected 1..20. Falling back to 8.`);
+    return 8;
+  }
+  return Math.floor(n);
+})();
 
 let lastContributorCount = 0;
 let poseidonInstance = null;
@@ -289,6 +295,12 @@ async function updateContractRoot(treeData) {
     const MerkleZKRegistry = await ethers.getContractFactory('MerkleZKRegistry');
     const merkleZK = MerkleZKRegistry.attach(merkleZKAddress);
 
+    // Some deployments/ABIs may not expose contributorRoot/updateContributorRoot.
+    // Skip quietly instead of error-spamming PM2 logs.
+    if (typeof merkleZK.contributorRoot !== 'function' || typeof merkleZK.updateContributorRoot !== 'function') {
+      return;
+    }
+
     // Check if root needs updating
     const currentRoot = await merkleZK.contributorRoot();
     if (currentRoot.toLowerCase() === treeData.root.toLowerCase()) {
@@ -307,7 +319,7 @@ async function updateContractRoot(treeData) {
     console.log(`   ✅ On-chain root updated!`);
     
   } catch (error) {
-    console.error(`❌ Failed to update on-chain root: ${error.message}`);
+    // Non-fatal - continue operation (keep logs minimal to avoid PM2 spam)
     // Non-fatal - continue operation
   }
 }

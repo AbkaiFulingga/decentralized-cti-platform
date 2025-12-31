@@ -51,3 +51,7 @@ build/
 # Temporary files
 *.tmp
 *.temp
+
+# Generated contributor Poseidon Merkle tree snapshots (runtime artifacts)
+contributor-merkle-tree.json
+cti-frontend/public/contributor-merkle-tree.json
