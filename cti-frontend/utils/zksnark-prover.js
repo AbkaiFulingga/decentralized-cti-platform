@@ -19,7 +19,6 @@
  */
 
 import { ethers } from 'ethers';
-import dynamic from 'next/dynamic';
 
 // Configuration constants
 const CONFIG = {
@@ -181,20 +180,24 @@ export class ZKSnarkProver {
       try {
         logger.log('📦 Loading snarkjs library...');
 
-        // IMPORTANT (Next.js): importing snarkjs via a plain dynamic import can (in some builds)
-        // route through webpack runtime chunk URL generation and crash with
-        // `encode-uri-path.js: Cannot read properties of undefined (reading 'split')`.
+        // IMPORTANT (Next.js dev): `import('snarkjs')` may be routed through a runtime chunk-path
+        // resolver that can crash with `encode-uri-path.js ... undefined (reading 'split')`.
+        // To avoid that, import snarkjs through its explicit ESM build entry.
         //
-        // Using next/dynamic with `ssr:false` forces this module to only ever load in the browser,
-        // avoiding SSR/RSC evaluation and avoiding some webpack runtime paths.
-        // We still access the module via `.preload()` so the API remains promise-based.
-        const SnarkjsClientOnly = dynamic(() => import('snarkjs'), { ssr: false });
-        // Ensure the module is actually fetched.
-        await SnarkjsClientOnly.preload();
+        // snarkjs package.json exposes: "snarkjs": "build/main.cjs" (CLI) but the runtime library
+        // is available at build/main.js (ESM). This path is stable for bundlers.
+        // NOTE: We must avoid referencing non-exported package subpaths in a way that Next can
+        // statically analyze, otherwise `next build` warns/errors due to the package "exports".
+        // Using `new Function` ensures the import specifier is *runtime-only*.
+        const runtimeImport = (specifier) => new Function('s', 'return import(s)')(specifier);
 
-        // next/dynamic doesn't return the imported module directly, so we perform a second import
-        // after preload. This stays in the browser-only execution path.
-        const mod = await import('snarkjs');
+        let mod;
+        try {
+          mod = await runtimeImport('snarkjs/build/main.js');
+        } catch (e) {
+          // Fallback for environments where the above path isn't resolvable.
+          mod = await runtimeImport('snarkjs');
+        }
         const snarkjs = mod?.default ?? mod;
 
         if (!snarkjs?.groth16?.fullProve || !snarkjs?.groth16?.verify) {
@@ -206,10 +209,7 @@ export class ZKSnarkProver {
         return this.snarkjs;
       } catch (error) {
         logger.error('❌ Failed to load snarkjs:', error);
-        throw new Error(
-          `snarkjs initialization failed: ${error?.message || String(error)}. ` +
-          `If this is the encode-uri-path ".split" crash, it usually indicates a broken client-side chunk URL in this build.`
-        );
+        throw new Error(`snarkjs initialization failed: ${error?.message || String(error)}`);
       } finally {
         // Allow retries if it failed.
         if (!this.snarkjs) this.snarkjsPromise = null;
