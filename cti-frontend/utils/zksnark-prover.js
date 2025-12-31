@@ -19,7 +19,6 @@
  */
 
 import { ethers } from 'ethers';
-import snarkjsClient from './snarkjs-client';
 
 // Configuration constants
 const CONFIG = {
@@ -172,9 +171,16 @@ export class ZKSnarkProver {
       throw new Error('snarkjs initialization attempted on the server (SSR). Anonymous proving is browser-only.');
     }
 
-    // Use a client-only wrapper which does a static import.
-    // This sidesteps dev-time chunk URL issues that can happen with dynamic imports.
-    const snarkjs = snarkjsClient;
+    // Avoid dynamic `import('snarkjs')` in Next dev (can trigger encode-uri-path `.split` crash).
+    // Instead, rely on CommonJS `require` which webpack/Next safely bundles.
+    // This is still browser-only (guarded above).
+    let snarkjs;
+    try {
+      // eslint-disable-next-line global-require
+      snarkjs = require('snarkjs');
+    } catch (e) {
+      throw new Error(`snarkjs require() failed: ${e?.message || String(e)}`);
+    }
 
     if (!snarkjs?.groth16?.fullProve || !snarkjs?.groth16?.verify) {
       throw new Error('snarkjs loaded but API surface is missing (groth16.fullProve/verify)');
