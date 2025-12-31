@@ -19,6 +19,7 @@
  */
 
 import { ethers } from 'ethers';
+import dynamic from 'next/dynamic';
 
 // Configuration constants
 const CONFIG = {
@@ -150,7 +151,7 @@ export class ZKSnarkProver {
     
     this.contributorTree = null;
     this.poseidonCache = null;
-    this.snarkjsPromise = null;
+  this.snarkjsPromise = null;
 
     // NOTE: Do not pre-initialize snarkjs at module load / construction time.
     // This avoids noisy runtime errors on pages that import this module, but don't
@@ -164,16 +165,58 @@ export class ZKSnarkProver {
    */
   async _initializeSnarkjs() {
     if (this.snarkjs) return this.snarkjs;
-    
-    try {
-      logger.log('📦 Loading snarkjs library...');
-      this.snarkjs = await import('snarkjs');
-      logger.log('✅ snarkjs loaded successfully');
-      return this.snarkjs;
-    } catch (error) {
-      logger.error('❌ Failed to load snarkjs:', error);
-      throw new Error(`snarkjs initialization failed: ${error.message}`);
+
+    // zkSNARK proving must only run in the browser.
+    // If this gets called during SSR / RSC evaluation, fail fast with a clear message.
+    if (typeof window === 'undefined') {
+      throw new Error('snarkjs initialization attempted on the server (SSR). Anonymous proving is browser-only.');
     }
+
+    // Cache the in-flight import to avoid concurrent imports racing.
+    if (this.snarkjsPromise) {
+      return this.snarkjsPromise;
+    }
+    
+    this.snarkjsPromise = (async () => {
+      try {
+        logger.log('📦 Loading snarkjs library...');
+
+        // IMPORTANT (Next.js): importing snarkjs via a plain dynamic import can (in some builds)
+        // route through webpack runtime chunk URL generation and crash with
+        // `encode-uri-path.js: Cannot read properties of undefined (reading 'split')`.
+        //
+        // Using next/dynamic with `ssr:false` forces this module to only ever load in the browser,
+        // avoiding SSR/RSC evaluation and avoiding some webpack runtime paths.
+        // We still access the module via `.preload()` so the API remains promise-based.
+        const SnarkjsClientOnly = dynamic(() => import('snarkjs'), { ssr: false });
+        // Ensure the module is actually fetched.
+        await SnarkjsClientOnly.preload();
+
+        // next/dynamic doesn't return the imported module directly, so we perform a second import
+        // after preload. This stays in the browser-only execution path.
+        const mod = await import('snarkjs');
+        const snarkjs = mod?.default ?? mod;
+
+        if (!snarkjs?.groth16?.fullProve || !snarkjs?.groth16?.verify) {
+          throw new Error('snarkjs module loaded but API surface is missing (groth16.fullProve/verify)');
+        }
+
+        this.snarkjs = snarkjs;
+        logger.log('✅ snarkjs loaded successfully');
+        return this.snarkjs;
+      } catch (error) {
+        logger.error('❌ Failed to load snarkjs:', error);
+        throw new Error(
+          `snarkjs initialization failed: ${error?.message || String(error)}. ` +
+          `If this is the encode-uri-path ".split" crash, it usually indicates a broken client-side chunk URL in this build.`
+        );
+      } finally {
+        // Allow retries if it failed.
+        if (!this.snarkjs) this.snarkjsPromise = null;
+      }
+    })();
+
+    return this.snarkjsPromise;
   }
 
   /**
