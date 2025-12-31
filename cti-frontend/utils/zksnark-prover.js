@@ -19,6 +19,7 @@
  */
 
 import { ethers } from 'ethers';
+import snarkjsClient from './snarkjs-client';
 
 // Configuration constants
 const CONFIG = {
@@ -171,52 +172,16 @@ export class ZKSnarkProver {
       throw new Error('snarkjs initialization attempted on the server (SSR). Anonymous proving is browser-only.');
     }
 
-    // Cache the in-flight import to avoid concurrent imports racing.
-    if (this.snarkjsPromise) {
-      return this.snarkjsPromise;
+    // Use a client-only wrapper which does a static import.
+    // This sidesteps dev-time chunk URL issues that can happen with dynamic imports.
+    const snarkjs = snarkjsClient;
+
+    if (!snarkjs?.groth16?.fullProve || !snarkjs?.groth16?.verify) {
+      throw new Error('snarkjs loaded but API surface is missing (groth16.fullProve/verify)');
     }
-    
-    this.snarkjsPromise = (async () => {
-      try {
-        logger.log('📦 Loading snarkjs library...');
 
-        // IMPORTANT (Next.js dev): `import('snarkjs')` may be routed through a runtime chunk-path
-        // resolver that can crash with `encode-uri-path.js ... undefined (reading 'split')`.
-        // To avoid that, import snarkjs through its explicit ESM build entry.
-        //
-        // snarkjs package.json exposes: "snarkjs": "build/main.cjs" (CLI) but the runtime library
-        // is available at build/main.js (ESM). This path is stable for bundlers.
-        // NOTE: We must avoid referencing non-exported package subpaths in a way that Next can
-        // statically analyze, otherwise `next build` warns/errors due to the package "exports".
-        // Using `new Function` ensures the import specifier is *runtime-only*.
-        const runtimeImport = (specifier) => new Function('s', 'return import(s)')(specifier);
-
-        let mod;
-        try {
-          mod = await runtimeImport('snarkjs/build/main.js');
-        } catch (e) {
-          // Fallback for environments where the above path isn't resolvable.
-          mod = await runtimeImport('snarkjs');
-        }
-        const snarkjs = mod?.default ?? mod;
-
-        if (!snarkjs?.groth16?.fullProve || !snarkjs?.groth16?.verify) {
-          throw new Error('snarkjs module loaded but API surface is missing (groth16.fullProve/verify)');
-        }
-
-        this.snarkjs = snarkjs;
-        logger.log('✅ snarkjs loaded successfully');
-        return this.snarkjs;
-      } catch (error) {
-        logger.error('❌ Failed to load snarkjs:', error);
-        throw new Error(`snarkjs initialization failed: ${error?.message || String(error)}`);
-      } finally {
-        // Allow retries if it failed.
-        if (!this.snarkjs) this.snarkjsPromise = null;
-      }
-    })();
-
-    return this.snarkjsPromise;
+    this.snarkjs = snarkjs;
+    return this.snarkjs;
   }
 
   /**
