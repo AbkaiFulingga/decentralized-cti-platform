@@ -533,18 +533,27 @@ export class ZKSnarkProver {
 
       const circuitInputs = {
         // Public inputs
-        commitment: ethers.toBigInt(commitment),
-        merkleRoot: ethers.toBigInt(contributorTreeRoot),
+        // NOTE: snarkjs + circom witness calculator expects inputs as
+        // JSON-serializable values (string/number/array). Passing BigInt can
+        // trigger subtle runtime issues depending on bundler/polyfills.
+        // Use decimal strings consistently.
+        commitment: ethers.toBigInt(commitment).toString(),
+        merkleRoot: ethers.toBigInt(contributorTreeRoot).toString(),
         
         // Private inputs
-        address: addressBigInt,
-        nonce: nonce,
+        address: addressBigInt.toString(),
+        nonce: nonce.toString(),
         merkleProof: paddedProof.map(p => p.toString()),
-        merklePathIndices: paddedIndices
+        merklePathIndices: paddedIndices.map((v) => Number(v))
       };
 
       logger.info('   ✅ Circuit inputs validated');
-      logger.log(`   - Proof depth: ${merkleProofData.pathElements.length} (padded to ${LEVELS})`);
+      logger.log(
+        `   - Proof depth: ${merkleProofData.pathElements.length} (padded to ${LEVELS})\n` +
+        `   - Indices sample: ${paddedIndices.slice(0, 6).join(', ')}\n` +
+        `   - Root (hex): ${contributorTreeRoot}\n` +
+        `   - Root (dec): ${circuitInputs.merkleRoot}`
+      );
 
       // Step 5: Generate witness and proof with timeout
       logger.info('⚙️  Step 5/5: Computing witness and generating proof...');
