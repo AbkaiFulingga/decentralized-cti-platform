@@ -435,7 +435,10 @@ export default function IOCSubmissionForm() {
       }
 
       // Submit batch
-      if (privacyMode === 'anonymous' && currentNetwork.chainId === 421614 && zksnarkReady && isInTree) {
+      const wantsAnonymous = privacyMode === 'anonymous';
+      const canDoAnonymous = wantsAnonymous && currentNetwork.chainId === 421614 && zksnarkReady && isInTree;
+
+      if (canDoAnonymous) {
         // ═══════════════════════════════════════════════════════════
         // ANONYMOUS SUBMISSION WITH GROTH16 zkSNARK PROOF (L2 only)
         // ═══════════════════════════════════════════════════════════
@@ -531,14 +534,34 @@ Gas used: ${receipt.gasUsed.toString()}`);
           
         } catch (proofError) {
           console.error('❌ zkSNARK submission failed:', proofError);
-          setStatus(`❌ zkSNARK proof generation failed: ${proofError.message}`);
+          // IMPORTANT: ZK proof should never break core submission.
+          // If anonymous mode fails (e.g. snarkjs load error), fall back to normal public submission.
+          setStatus(
+            `⚠️ Anonymous proof failed (falling back to public submission): ${proofError.message}`
+          );
           setProofProgress('');
-          throw proofError;
+          // Fall through to public submission below
         } finally {
           setProofGenerating(false);
         }
         
-      } else {
+      }
+
+      if (!canDoAnonymous) {
+        if (wantsAnonymous) {
+          // User selected anonymous but can't do it on this network / state.
+          // Don't hard fail: the core feature is submitting IOCs.
+          setStatus(
+            currentNetwork.chainId !== 421614
+              ? 'ℹ️ Anonymous mode is L2-only. Submitting publicly…'
+              : !zksnarkReady
+                ? 'ℹ️ zkSNARK system not ready yet. Submitting publicly…'
+                : !isInTree
+                  ? 'ℹ️ You are not in the contributor tree yet. Submitting publicly…'
+                  : 'ℹ️ Anonymous mode unavailable right now. Submitting publicly…'
+          );
+        }
+
         // PUBLIC SUBMISSION
         setStatus('📡 Submitting batch...');
         console.log('\n📡 Step 5: Public batch submission...');
