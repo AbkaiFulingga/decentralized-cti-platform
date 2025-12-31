@@ -130,10 +130,7 @@ export default function AnalyticsDashboard() {
     const provider = new ethers.JsonRpcProvider(network.rpcUrl);
     
     const registryABI = [
-      "function getBatchCount() public view returns (uint256)",
-      // Note: getContributorCount() doesn't exist in PrivacyPreservingRegistry (uses mapping, not array)
-      // We'll count unique contributors from events instead
-      "event BatchSubmitted(uint256 indexed batchIndex, address indexed submitter, string ipfsHash, bytes32 merkleRoot, uint256 timestamp)"
+      "function getBatchCount() public view returns (uint256)"
     ];
     
     const registry = new ethers.Contract(
@@ -150,81 +147,22 @@ export default function AnalyticsDashboard() {
         batches: Number(batchCount)
       });
       
-      // Get recent batch events for heatmap (last 30 days only)
-      const currentBlock = await provider.getBlockNumber();
-      const blocksPerDay = network.chainId === 11155111 ? 7200 : 43200; // Sepolia: 12s, Arbitrum: 2s
-      
-      // 🔥 CRITICAL OPTIMIZATION: Limit to last 3 days to avoid 429 errors
-      // Why 3 days? On Sepolia with free-tier RPC:
-      //   - 3 days = ~21,600 blocks = ~2,160 chunks = 36 minutes at 1 req/sec
-      //   - 7 days = ~50,400 blocks = ~5,040 chunks = 84 minutes (TOO SLOW)
-      // Heatmap shows 30 days but most recent activity is what matters for analytics
-      const daysToQuery = 3; // ✅ REDUCED from 30 to 3 for performance
-      const blocksToQuery = blocksPerDay * daysToQuery;
-      const recentStartBlock = currentBlock - blocksToQuery;
-      
-      // Use more recent of: deployment block OR 3 days ago
-      const safeStartBlock = Math.max(network.deploymentBlock, recentStartBlock);
-      
-      // Network-specific chunk sizes based on RPC limits
-      // Alchemy Sepolia free tier: 9 blocks max (10 fails due to inclusive counting)
-      // Arbitrum public RPC: 10,000 blocks works perfectly
-      const chunkSize = network.chainId === 11155111 ? 9 : 10000; // Sepolia vs Arbitrum
-      const delayMs = network.chainId === 11155111 ? 1000 : 100; // Slower for Alchemy, faster for Arbitrum
-      
-      const estimatedChunks = Math.ceil((currentBlock - safeStartBlock) / chunkSize);
-      const estimatedTime = Math.ceil(estimatedChunks * (delayMs / 1000)); // Convert ms to seconds
-      
-      AppLogger.debug('Analytics', `Querying ${network.name} events`, {
-        deploymentBlock: network.deploymentBlock,
-        currentBlock,
-        recentStartBlock,
-        safeStartBlock,
-        range: currentBlock - safeStartBlock,
-        chunkSize,
-        delayMs,
-        estimatedChunks,
-        estimatedTimeSeconds: estimatedTime,
-        note: `Querying last ${daysToQuery} days only for performance`
-      });
-      
-      const filter = registry.filters.BatchSubmitted();
-      
-      // Query in chunks to avoid rate limits
-      const events = await queryEventsInChunks(registry, filter, safeStartBlock, currentBlock, chunkSize, delayMs);
-      
-      // Build daily submission map AND count unique contributors
-      const dailySubmissions = {};
-      const uniqueContributors = new Set();
-      
-      for (const event of events) {
-        try {
-          const block = await provider.getBlock(event.blockNumber);
-          const date = new Date(Number(block.timestamp) * 1000).toISOString().split('T')[0];
-          dailySubmissions[date] = (dailySubmissions[date] || 0) + 1;
-          
-          // Track unique contributor addresses
-          if (event.args && event.args.submitter) {
-            uniqueContributors.add(event.args.submitter.toLowerCase());
-          }
-        } catch (err) {
-          // Skip blocks that fail
-          continue;
-        }
-      }
-      
-      const contributorCount = uniqueContributors.size;
-      
+      // IMPORTANT: Do NOT scan logs client-side.
+      // Free/public RPCs make per-block event scans extremely slow and rate-limit prone
+      // (your log showed ~1783 seconds ETA on Sepolia alone).
+      // We'll show fast batch counts only; contributor counts / heatmaps should come from a server-side cached indexer.
+
       AppLogger.info('Analytics', `${network.name} stats complete`, {
         batches: Number(batchCount),
-        contributors: contributorCount,
-        events: events.length
+        contributors: null,
+        events: null,
+        mode: 'batchCount-only'
       });
-      
+
       return {
         batchCount: Number(batchCount),
-        contributorCount: contributorCount,
-        dailySubmissions
+        contributorCount: 0,
+        dailySubmissions: {}
       };
       
     } catch (error) {
@@ -236,37 +174,6 @@ export default function AnalyticsDashboard() {
         dailySubmissions: {}
       };
     }
-  };
-
-  // Simple chunked query with network-specific chunk sizes
-  const queryEventsInChunks = async (contract, filter, startBlock, endBlock, chunkSize = 10, delayMs = 500) => {
-    const events = [];
-    
-    const totalChunks = Math.ceil((endBlock - startBlock + 1) / chunkSize);
-    AppLogger.info('Analytics', `Querying ${totalChunks} chunks (${chunkSize} blocks each) with ${delayMs}ms delays (ETA: ${Math.ceil(totalChunks * delayMs / 1000)}s)`);
-    
-    for (let i = startBlock; i <= endBlock; i += chunkSize) {
-      const chunkEnd = Math.min(i + chunkSize - 1, endBlock);
-      try {
-        const chunkEvents = await contract.queryFilter(filter, i, chunkEnd);
-        events.push(...chunkEvents);
-        
-        // Rate limit protection
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-      } catch (error) {
-        AppLogger.warn('Analytics', `Chunk ${i}-${chunkEnd} failed`, error);
-        
-        // If 429 error, wait longer before continuing
-        if (error.message && error.message.includes('429')) {
-          AppLogger.warn('Analytics', 'Rate limit hit, waiting 5 seconds...');
-          await new Promise(resolve => setTimeout(resolve, 5000));
-        }
-        // Continue with other chunks even if one fails
-      }
-    }
-    
-    AppLogger.info('Analytics', `Query complete: ${events.length} events retrieved`);
-    return events;
   };
 
   const getLast30Days = () => {
@@ -325,7 +232,7 @@ export default function AnalyticsDashboard() {
           <div className="bg-white rounded-2xl shadow-xl p-12 text-center">
             <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-purple-600 mx-auto mb-4"></div>
             <p className="text-gray-600">Loading platform statistics...</p>
-            <p className="text-sm text-gray-400 mt-2">This should take less than 10 seconds</p>
+            <p className="text-sm text-gray-400 mt-2">Fetching fast on-chain counters (no log scans)</p>
           </div>
         ) : stats ? (
           <>

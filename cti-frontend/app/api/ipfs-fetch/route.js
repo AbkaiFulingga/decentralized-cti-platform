@@ -16,6 +16,8 @@ export async function GET(request) {
     return NextResponse.json({ error: 'CID is required' }, { status: 400 });
   }
 
+  const failures = [];
+
   // Try each gateway until one works
   for (const gateway of IPFS_GATEWAYS) {
     try {
@@ -29,6 +31,12 @@ export async function GET(request) {
       });
 
       if (response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.toLowerCase().includes('application/json')) {
+          failures.push({ gateway, status: response.status, error: `Unexpected content-type: ${contentType || 'unknown'}` });
+          continue;
+        }
+
         const data = await response.json();
         console.log(`✅ Success from ${gateway}`);
         
@@ -38,14 +46,18 @@ export async function GET(request) {
           gateway: gateway
         });
       }
+
+      failures.push({ gateway, status: response.status, error: `HTTP ${response.status}` });
     } catch (error) {
       console.log(`❌ Failed from ${gateway}:`, error.message);
+      failures.push({ gateway, status: null, error: String(error?.message || error) });
       continue;
     }
   }
 
   return NextResponse.json({ 
     error: 'All IPFS gateways failed',
-    cid: cid 
+    cid: cid,
+    failures
   }, { status: 503 });
 }

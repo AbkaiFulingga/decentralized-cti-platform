@@ -633,7 +633,11 @@ Gas used: ${receipt.gasUsed.toString()}`);
       await checkRegistrationStatus();
 
       if (needsReg) {
-        setStatus(prev => prev + '\n\n💡 Anonymous mode available after next tree update (2 AM UTC).');
+        if (currentNetwork?.chainId === 421614) {
+          setStatus(prev => prev + '\n\n💡 Anonymous mode (L2) available after the next tree update (2 AM UTC).');
+        } else {
+          setStatus(prev => prev + '\n\nℹ️ Anonymous submissions are L2-only. On L1, submissions are public.');
+        }
       }
       
       console.log('\n═══════════════════════════════════════════════════════');
