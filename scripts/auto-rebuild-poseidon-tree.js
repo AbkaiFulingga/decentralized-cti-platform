@@ -227,8 +227,8 @@ async function buildPoseidonMerkleTree(contributors) {
       
       // Hash with Poseidon(2) - zkSNARK-friendly
       const hash = poseidon([left, right]);
-      const hashBigInt = F.toObject(hash);
-      nextLevel.push(hashBigInt);
+      // Normalize deterministically to a BigInt in the field.
+      nextLevel.push(BigInt(F.toString(hash)));
     }
     currentLevel = nextLevel;
     tree.push(currentLevel);
@@ -239,7 +239,7 @@ async function buildPoseidonMerkleTree(contributors) {
   }
 
   const rootBigInt = currentLevel[0];
-  const root = '0x' + rootBigInt.toString(16).padStart(64, '0');
+  const root = '0x' + BigInt(rootBigInt).toString(16).padStart(64, '0');
   console.log(`✅ Merkle Root: ${root}`);
 
   // Generate proofs for each contributor
