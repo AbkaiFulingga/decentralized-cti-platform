@@ -471,7 +471,7 @@ export default function IOCSubmissionForm() {
           const registryWithZK = new ethers.Contract(
             currentNetwork.contracts.registry,
             [
-              "function addBatchWithZKProof(string memory cid, bytes32 merkleRoot, uint256[2] memory pA, uint256[2][2] memory pB, uint256[2] memory pC, uint256[2] memory pubSignals) external"
+              "function addBatchWithZKProof((uint256[2] a, uint256[2][2] b, uint256[2] c) proof, bytes32 commitment, bytes32 merkleRoot, string ipfsCID) external payable"
             ],
             signer
           );
@@ -501,15 +501,13 @@ export default function IOCSubmissionForm() {
           console.log('Submission fee:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
           
           const tx = await registryWithZK.addBatchWithZKProof(
-            cid,
+            { a: proof.pA, b: proof.pB, c: proof.pC },
+            proof.commitment,
             merkleRootHash,
-            proof.pA,
-            proof.pB,
-            proof.pC,
-            proof.pubSignals,
-            { 
+            cid,
+            {
               value: submissionFeeWithMargin,
-              gasLimit: 500000 
+              gasLimit: 500000
             }
           );
           
