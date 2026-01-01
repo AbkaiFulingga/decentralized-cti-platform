@@ -158,6 +158,16 @@ function computeRootFromProof({ poseidon, leaf, siblings, indices }) {
   return cur;
 }
 
+function derivePathIndicesFromLeafIndex(leafIndex, levels) {
+  let idx = BigInt(leafIndex);
+  const out = [];
+  for (let i = 0; i < levels; i++) {
+    out.push(Number(idx & 1n));
+    idx >>= 1n;
+  }
+  return out;
+}
+
 async function main() {
   // Safety valve: if something (worker threads, lingering handles) keeps Node alive
   // after producing output, force a clean exit so this script can be used in CI/cron.
@@ -181,7 +191,8 @@ async function main() {
   }
 
   const tree = JSON.parse(fs.readFileSync(TREE_FILE, 'utf8'));
-  const address = tree?.contributors?.[0];
+  const firstContributor = tree?.contributors?.[0];
+  const address = typeof firstContributor === 'string' ? firstContributor : firstContributor?.address;
   const proof = tree?.proofs?.[0];
 
   if (!address || !proof) {
@@ -198,9 +209,11 @@ async function main() {
 
   // Tree JSON format produced by scripts/auto-rebuild-poseidon-tree.js:
   //   proof.proof = array of sibling hashes (hex strings)
-  //   proof.pathIndices = array of 0/1 numbers
+  //   proof.pathIndices = array of 0/1 numbers (optional)
   const proofSiblings = proof.proof;
-  const proofPathIndices = proof.pathIndices;
+  const proofPathIndices = Array.isArray(proof.pathIndices)
+    ? proof.pathIndices
+    : derivePathIndicesFromLeafIndex(leafIndex, realDepth);
 
   if (!Array.isArray(proofSiblings) || !Array.isArray(proofPathIndices)) {
     throw new Error('Proof missing siblings/pathIndices arrays');

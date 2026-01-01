@@ -39,12 +39,14 @@
     "@iden3/binfileutils": "^0.0.12",
     "axios": "^1.6.5",
     "circomlib": "^2.0.5",
+    "circomlibjs": "0.1.7",
     "dotenv": "^17.2.3",
     "ipfs-http-client": "^56.0.3",
     "keccak256": "^1.0.6",
     "merkletreejs": "^0.6.0",
     "node-cron": "^3.0.3",
     "snarkjs": "^0.7.5",
-    "stix2": "^1.1.0"
+    "stix2": "^1.1.0",
+    "wasmcurves": "0.0.2"
   }
 }
