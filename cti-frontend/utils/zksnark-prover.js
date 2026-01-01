@@ -227,6 +227,26 @@ export class ZKSnarkProver {
   }
 
   /**
+   * Compute Poseidon(2) "zero subtree" roots for padding a shorter Merkle proof
+   * (e.g. depth 8) up to the circuit's fixed depth (e.g. 20).
+   *
+   * z[0] = 0
+   * z[i+1] = H(z[i], z[i])
+   */
+  async _getZeroSubtreeRoots(levels = CIRCUIT_LEVELS) {
+    const poseidon = await this.buildPoseidon();
+    const F = poseidon.F;
+
+    const zeros = [0n];
+    for (let i = 0; i < levels; i++) {
+      const prev = zeros[i];
+      const out = poseidon([prev, prev]);
+      zeros.push(BigInt(F.toString(out)));
+    }
+    return zeros;
+  }
+
+  /**
    * Compute a Poseidon Merkle root in JS using the same left/right selection
    * as the circom `MerkleTreeInclusionProof` template.
    *
@@ -601,11 +621,18 @@ export class ZKSnarkProver {
       if (paddedProof.length > CIRCUIT_LEVELS) paddedProof.splice(CIRCUIT_LEVELS);
       if (paddedIndices.length > CIRCUIT_LEVELS) paddedIndices.splice(CIRCUIT_LEVELS);
 
-      // Pad with zeros up to the circuit depth.
+      // Pad up to the circuit depth.
+      // IMPORTANT: We can't pad sibling hashes with literal 0.
+      // In a Poseidon Merkle tree, the sibling above the real depth is the root of an
+      // all-zero subtree and must be computed as:
+      //   z[0]=0, z[i+1]=Poseidon(z[i], z[i])
+      // Otherwise the circuit recomputed root will not match.
+      const zeroSubtreeRoots = await this._getZeroSubtreeRoots(CIRCUIT_LEVELS);
       while (paddedProof.length < CIRCUIT_LEVELS) {
-        paddedProof.push(0n);
-        // When padding siblings past the real tree height, the index doesn't matter.
-        // Keep it 0 for determinism.
+        const level = paddedProof.length; // 0-based level index
+        paddedProof.push(zeroSubtreeRoots[level]);
+        // For the padded region our branch is always on the left (index 0)
+        // because we padded leaves by appending zeros.
         paddedIndices.push(0);
       }
 
