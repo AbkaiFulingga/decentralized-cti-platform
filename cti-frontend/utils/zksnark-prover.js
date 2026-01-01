@@ -635,6 +635,36 @@ export class ZKSnarkProver {
       // Indices should exist; we keep them aligned with siblings.
       const paddedIndices = [...merkleProofData.pathIndices];
 
+      // 🔎 Pre-prove diagnostic: recompute the root exactly like the circuit does.
+      // If this doesn't match the public merkleRoot input, witness generation will fail
+      // at the `merkleRoot === merkleChecker.root` assert.
+      try {
+        const computedRootBigInt = await this._computeMerkleRootFromProof({
+          leaf: circuitLeaf,
+          pathElements: paddedProof,
+          pathIndices: paddedIndices,
+        });
+        const computedRootHex = ethers.toBeHex(computedRootBigInt, 32);
+        const expectedRootHex = ethers.hexlify(merkleProofData.root);
+
+        if (computedRootHex.toLowerCase() !== expectedRootHex.toLowerCase()) {
+          logger.error('❌ Pre-prove Merkle root mismatch (will fail in-circuit)');
+          logger.error(`   expectedRoot: ${expectedRootHex}`);
+          logger.error(`   computedRoot: ${computedRootHex}`);
+          logger.error(`   address:      ${address}`);
+          logger.error(`   leafIndex:    ${this.contributorTree?.contributors?.findIndex((c) => (typeof c === 'string' ? c : c?.address)?.toLowerCase?.() === address.toLowerCase())}`);
+          logger.error(`   proofDepth:   ${paddedProof.length}`);
+          logger.error(`   indicesAll0:  ${Array.isArray(paddedIndices) && paddedIndices.every((x) => Number(x) === 0)}`);
+          throw new Error(
+            'Merkle root mismatch before proving. The contributor tree proof/indices do not match the circuit leaf/root. ' +
+              'Rebuild the server contributor tree and ensure the frontend is using the same file.'
+          );
+        }
+      } catch (e) {
+        // Re-throw with context; this is the fastest way to debug line 97 asserts.
+        throw e;
+      }
+
       // Truncate if a backend ever emits more than the circuit supports.
       if (paddedProof.length > CIRCUIT_LEVELS) paddedProof.splice(CIRCUIT_LEVELS);
       if (paddedIndices.length > CIRCUIT_LEVELS) paddedIndices.splice(CIRCUIT_LEVELS);
