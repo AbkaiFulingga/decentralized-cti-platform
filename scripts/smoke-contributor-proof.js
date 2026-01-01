@@ -195,37 +195,39 @@ async function main() {
     throw new Error('Proof missing siblings/pathIndices arrays');
   }
 
-  const padded = padProofToCircuitDepth({
-    poseidon,
-    leafIndex,
-    proofSiblings: proofSiblings.map((x) => BigInt(x)),
-    proofPathIndices,
-    realDepth,
-    circuitLevels: CIRCUIT_LEVELS
-  });
+  const baseSiblings = proofSiblings.map((x) => BigInt(x));
+  const baseIndices = proofPathIndices.map((x) => Number(x));
 
-  const paddedAlt = padProofToCircuitDepth_AltOffByOne({
-    poseidon,
-    leafIndex,
-    proofSiblings: proofSiblings.map((x) => BigInt(x)),
-    proofPathIndices,
-    realDepth,
-    circuitLevels: CIRCUIT_LEVELS
-  });
+  // If the tree itself is already built at depth 20, do NOT try to "extend" it.
+  // Use the proof/root as-is, otherwise we risk feeding a mismatched merkleRoot.
+  const isAlreadyCircuitDepth = realDepth === CIRCUIT_LEVELS;
 
-  const computedRoot20 = computeRootFromProof({
-    poseidon,
-    leaf,
-    siblings: padded.siblings,
-    indices: padded.indices
-  });
+  const padded = isAlreadyCircuitDepth
+    ? { siblings: baseSiblings, indices: baseIndices }
+    : padProofToCircuitDepth({
+        poseidon,
+        leafIndex,
+        proofSiblings: baseSiblings,
+        proofPathIndices,
+        realDepth,
+        circuitLevels: CIRCUIT_LEVELS
+      });
 
-  const computedRoot20Alt = computeRootFromProof({
-    poseidon,
-    leaf,
-    siblings: paddedAlt.siblings,
-    indices: paddedAlt.indices
-  });
+  const paddedAlt = isAlreadyCircuitDepth
+    ? null
+    : padProofToCircuitDepth_AltOffByOne({
+        poseidon,
+        leafIndex,
+        proofSiblings: baseSiblings,
+        proofPathIndices,
+        realDepth,
+        circuitLevels: CIRCUIT_LEVELS
+      });
+
+  const computedRoot20 = computeRootFromProof({ poseidon, leaf, siblings: padded.siblings, indices: padded.indices });
+  const computedRoot20Alt = paddedAlt
+    ? computeRootFromProof({ poseidon, leaf, siblings: paddedAlt.siblings, indices: paddedAlt.indices })
+    : null;
 
   const nonce = randNonce();
   const commitment = poseidon2ToBigInt(poseidon, addressBig, nonce);
@@ -240,20 +242,29 @@ async function main() {
     nonce: toFieldDec(nonce)
   };
 
-  const attempts = [
-    {
-      name: 'primary',
-      root: computedRoot20,
-      siblings: padded.siblings,
-      indices: padded.indices
-    },
-    {
-      name: 'altOffByOne',
-      root: computedRoot20Alt,
-      siblings: paddedAlt.siblings,
-      indices: paddedAlt.indices
-    }
-  ];
+  const attempts = isAlreadyCircuitDepth
+    ? [
+        {
+          name: 'treeDepth20',
+          root: BigInt(tree.root),
+          siblings: padded.siblings,
+          indices: padded.indices
+        }
+      ]
+    : [
+        {
+          name: 'primary',
+          root: computedRoot20,
+          siblings: padded.siblings,
+          indices: padded.indices
+        },
+        {
+          name: 'altOffByOne',
+          root: computedRoot20Alt,
+          siblings: paddedAlt.siblings,
+          indices: paddedAlt.indices
+        }
+      ];
 
   let grothProof;
   let publicSignals;
@@ -295,8 +306,8 @@ async function main() {
     ok: true,
     address,
     treeRootDepth8: tree.root,
-    computedRootDepth20: '0x' + computedRoot20.toString(16),
-    computedRootDepth20Alt: '0x' + computedRoot20Alt.toString(16),
+    computedRootDepth20: computedRoot20 ? '0x' + computedRoot20.toString(16) : null,
+    computedRootDepth20Alt: computedRoot20Alt ? '0x' + computedRoot20Alt.toString(16) : null,
     usedAttempt: used?.name,
     publicSignalsLen: publicSignals.length,
     publicSignalsHead: publicSignals.slice(0, 4)
