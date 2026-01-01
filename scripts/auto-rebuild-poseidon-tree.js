@@ -200,7 +200,14 @@ async function buildPoseidonMerkleTree(contributors) {
   // IMPORTANT: Leaf semantics must match the zk circuit.
   // The circuit uses: leaf = Poseidon(1)(address)
   // See `circuits/contributor-proof.circom`.
-  const addressBigInts = contributors.map((addr) => ethers.toBigInt(addr));
+  // Contributors may come in as an array of strings OR legacy objects
+  // like { address, leafIndex, isRealContributor }. Normalize to hex strings.
+  const normalizedAddresses = contributors
+    .map((c) => (typeof c === 'string' ? c : c?.address))
+    .filter((a) => typeof a === 'string' && a.startsWith('0x'))
+    .map((a) => a.toLowerCase());
+
+  const addressBigInts = normalizedAddresses.map((addr) => ethers.toBigInt(addr));
   const leaves = addressBigInts.map((a) => {
     const out = poseidon([a]);
     // Convert field element to BigInt deterministically.
@@ -379,15 +386,23 @@ async function checkAndRebuild() {
       return;
     }
 
+      // If the output files are missing (common after restarts/clean deploys),
+      // force a rebuild even if the contributor count hasn't changed.
+      const outputMissing = !fs.existsSync(OUTPUT_FILE) || !fs.existsSync(FRONTEND_FILE);
+
     // Check if rebuild needed
-    if (contributors.length === lastContributorCount) {
+      if (!outputMissing && contributors.length === lastContributorCount) {
       console.log(`✅ No new contributors (${contributors.length} total)`);
       console.log(`   Next check in 60 seconds...\n`);
       return;
     }
 
     // Rebuild tree
-    console.log(`🚀 New contributors detected! (${lastContributorCount} → ${contributors.length})`);
+      if (outputMissing) {
+        console.log('🧱 Tree output missing on disk; forcing rebuild/write.');
+      } else {
+        console.log(`🚀 New contributors detected! (${lastContributorCount} → ${contributors.length})`);
+      }
     const treeData = await buildPoseidonMerkleTree(contributors);
     
     // Save to files
