@@ -486,6 +486,9 @@ export class ZKSnarkProver {
       leaf: proofData.leaf ?? this.contributorTree.leaves?.[leafIndex],
       root: this.contributorTree.root
     };
+
+    // Expose index for diagnostics / deterministic derivations elsewhere.
+    result.leafIndex = leafIndex;
     
     // ✅ FIX: Explicit validation
     if (!Validator.isValidHexString(result.root)) {
@@ -689,16 +692,28 @@ export class ZKSnarkProver {
         paddedIndices.push(0);
       }
 
-      // ✅ Extra diagnostic: recompute root exactly like the circuit does.
-      // If this fails, the circom assert at line ~97 is guaranteed to fail too.
+      // ✅ Extra diagnostic: ensure our in-browser Poseidon(address) matches the server tree leaf.
+      // The circuit computes leaf = Poseidon(address) internally, so if this check fails,
+      // the circom assert at line ~97 is guaranteed to fail.
+      const serverLeafBigInt = ethers.toBigInt(merkleProofData.leaf);
+      const circuitLeafBigInt = ethers.toBigInt(circuitLeaf);
+      if (serverLeafBigInt !== circuitLeafBigInt) {
+        const serverLeafHex = ethers.toBeHex(serverLeafBigInt, 32);
+        const circuitLeafHex = ethers.toBeHex(circuitLeafBigInt, 32);
+        logger.error('❌ Leaf mismatch: Poseidon(address) differs from server tree leaf');
+        logger.error(`   address:        ${address}`);
+        logger.error(`   leafIndex:       ${merkleProofData.leafIndex ?? 'unknown'}`);
+        logger.error(`   serverLeaf:      ${serverLeafHex}`);
+        logger.error(`   computedLeaf:    ${circuitLeafHex}`);
+        throw new Error(
+          'Leaf hashing mismatch between frontend and server tree. ' +
+            'This usually means the address-to-field conversion differs (e.g., missing mod reduction / different Poseidon impl).'
+        );
+      }
+
+      // ✅ Extra diagnostic: recompute root exactly like the circuit does using the circuit leaf.
       const jsComputedRoot = await this._computeMerkleRootFromProof({
-        // The circuit proves inclusion of leafHasher(address) (Poseidon(1)).
-        // Some older/newer tree JSONs may include `leaf`, but that value can be
-        // either:
-        //   - raw address (legacy) OR
-        //   - Poseidon(address) (desired)
-        // To stay correct w.r.t the circuit, always use the circuitLeaf here.
-        leaf: circuitLeaf,
+        leaf: circuitLeafBigInt,
         // IMPORTANT: recompute using only the real proof depth, not padded zeros.
         pathElements: paddedProof.slice(0, proofDepth),
         pathIndices: paddedIndices.slice(0, proofDepth)
