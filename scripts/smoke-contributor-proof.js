@@ -91,12 +91,58 @@ function padProofToCircuitDepth({
     // So at each higher level, the sibling is the empty subtree root at that level.
     const bit = Number(idx & 1n); // 0 => leaf on left
     indices.push(bit);
+
+    // IMPORTANT: The extension step from a real tree of depth `realDepth`
+    // combines the current subtree (which spans 2^realDepth leaves) with an
+    // *empty* sibling subtree spanning the same number of leaves.
+    // That sibling is the empty-subtree root of height `level`'s child subtree,
+    // which is `level` in terms of leaves under that node.
+    // Concretely, the first extension (level == realDepth) needs zeros[realDepth],
+    // then zeros[realDepth+1], ...
+    // NOTE: If you ever see a root mismatch, the most likely cause is an
+    // off-by-one between "treeDepth" semantics and "zero subtree height".
+    // The convention here is:
+    //   zeros[0] = 0 (empty leaf)
+    //   zeros[h] = root of an empty subtree with 2^h leaves
+    // For extending a depth-`realDepth` tree, the sibling at extension `level`
+    // should be zeros[level].
     siblings.push(zeros[level]);
     idx >>= 1n;
   }
 
   if (siblings.length !== circuitLevels || indices.length !== circuitLevels) {
     throw new Error(`Padding failed: siblings=${siblings.length}, indices=${indices.length}`);
+  }
+
+  return { siblings, indices };
+}
+
+function padProofToCircuitDepth_AltOffByOne({
+  poseidon,
+  leafIndex,
+  proofSiblings,
+  proofPathIndices,
+  realDepth,
+  circuitLevels
+}) {
+  // Alternative convention (some tree builders define the empty-subtree chain
+  // starting at height=1 for leaf-level). If the main convention fails, this
+  // gives us a deterministic second attempt.
+  const zeros = getZeroSubtreeRoots(poseidon, circuitLevels + 1);
+
+  const siblings = proofSiblings.map((x) => BigInt(x));
+  const indices = proofPathIndices.map((x) => Number(x));
+
+  let idx = BigInt(leafIndex);
+  for (let level = realDepth; level < circuitLevels; level++) {
+    const bit = Number(idx & 1n);
+    indices.push(bit);
+    siblings.push(zeros[level + 1]);
+    idx >>= 1n;
+  }
+
+  if (siblings.length !== circuitLevels || indices.length !== circuitLevels) {
+    throw new Error(`Alt padding failed: siblings=${siblings.length}, indices=${indices.length}`);
   }
 
   return { siblings, indices };
@@ -158,6 +204,15 @@ async function main() {
     circuitLevels: CIRCUIT_LEVELS
   });
 
+  const paddedAlt = padProofToCircuitDepth_AltOffByOne({
+    poseidon,
+    leafIndex,
+    proofSiblings: proofSiblings.map((x) => BigInt(x)),
+    proofPathIndices,
+    realDepth,
+    circuitLevels: CIRCUIT_LEVELS
+  });
+
   const computedRoot20 = computeRootFromProof({
     poseidon,
     leaf,
@@ -165,28 +220,71 @@ async function main() {
     indices: padded.indices
   });
 
+  const computedRoot20Alt = computeRootFromProof({
+    poseidon,
+    leaf,
+    siblings: paddedAlt.siblings,
+    indices: paddedAlt.indices
+  });
+
   const nonce = randNonce();
   const commitment = poseidon2ToBigInt(poseidon, addressBig, nonce);
 
-  const input = {
+  const baseInput = {
     // circuit public
     commitment: toFieldDec(commitment),
-    merkleRoot: toFieldDec(computedRoot20),
+    // merkleRoot set per-attempt
 
     // circuit private
     address: toFieldDec(addressBig),
-    nonce: toFieldDec(nonce),
-    merkleProof: padded.siblings.map(toFieldDec),
-    merklePathIndices: padded.indices
+    nonce: toFieldDec(nonce)
   };
 
-  // This is the real test: if padding/root are inconsistent with the circuit,
-  // fullProve will throw with the assert at line 97.
-  const { proof: grothProof, publicSignals } = await snarkjs.groth16.fullProve(
-    input,
-    WASM_FILE,
-    ZKEY_FILE
-  );
+  const attempts = [
+    {
+      name: 'primary',
+      root: computedRoot20,
+      siblings: padded.siblings,
+      indices: padded.indices
+    },
+    {
+      name: 'altOffByOne',
+      root: computedRoot20Alt,
+      siblings: paddedAlt.siblings,
+      indices: paddedAlt.indices
+    }
+  ];
+
+  let grothProof;
+  let publicSignals;
+  let used;
+  let lastErr;
+
+  for (const a of attempts) {
+    try {
+      const input = {
+        ...baseInput,
+        merkleRoot: toFieldDec(a.root),
+        merkleProof: a.siblings.map(toFieldDec),
+        merklePathIndices: a.indices
+      };
+
+      ({ proof: grothProof, publicSignals } = await snarkjs.groth16.fullProve(
+        input,
+        WASM_FILE,
+        ZKEY_FILE
+      ));
+      used = a;
+      break;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (!grothProof || !publicSignals) {
+    // Re-throw last error (likely line 97)
+    throw lastErr;
+  }
 
   // Quick sanity assertions
   if (!grothProof || !publicSignals) {
@@ -198,6 +296,8 @@ async function main() {
     address,
     treeRootDepth8: tree.root,
     computedRootDepth20: '0x' + computedRoot20.toString(16),
+    computedRootDepth20Alt: '0x' + computedRoot20Alt.toString(16),
+    usedAttempt: used?.name,
     publicSignalsLen: publicSignals.length,
     publicSignalsHead: publicSignals.slice(0, 4)
   }, null, 2));
