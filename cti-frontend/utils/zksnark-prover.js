@@ -446,19 +446,37 @@ export class ZKSnarkProver {
     logger.log('✅ Using precomputed Poseidon proof (depth:', proofData.proof.length, ')');
     
     // Prefer the precomputed `pathIndices` from the Poseidon tree builder.
-    // That builder knows the exact left/right orientation used when hashing.
-    // Fallback: derive bits from leafIndex (low-bit first).
-    const pathIndices = Array.isArray(proofData.pathIndices)
-      ? proofData.pathIndices.map((v) => Number(v))
-      : (() => {
-          const bits = [];
-          let idx = leafIndex;
-          for (let i = 0; i < ZKSnarkProver.MERKLE_TREE_LEVELS; i++) {
-            bits.push(Number(idx & 1));
-            idx = idx >> 1;
-          }
-          return bits;
-        })();
+    // However, we've seen some environments produce `pathIndices` that are missing
+    // or degenerate (e.g. all zeros). In those cases, deterministically derive the
+    // indices from the leaf index (low-bit first) to match circuit orientation.
+    const normalizeBits = (bits) =>
+      bits
+        .map((v) => (typeof v === 'bigint' ? Number(v) : Number(v)))
+        .map((n) => (n ? 1 : 0));
+
+    const derivedIndices = (() => {
+      const bits = [];
+      let idx = leafIndex;
+      for (let i = 0; i < ZKSnarkProver.MERKLE_TREE_LEVELS; i++) {
+        bits.push(Number(idx & 1));
+        idx = idx >> 1;
+      }
+      return normalizeBits(bits);
+    })();
+
+    const providedIndices = Array.isArray(proofData.pathIndices)
+      ? normalizeBits(proofData.pathIndices)
+      : null;
+
+    // If provided indices are missing OR clearly suspicious (all zeros), override.
+    // For a single-leaf set, the correct indices are all 0 anyway, so this is safe.
+    // For multi-leaf trees, this restores correct left/right orientation.
+    const shouldDerive =
+      !providedIndices ||
+      providedIndices.length === 0 ||
+      (providedIndices.length > 0 && providedIndices.every((b) => b === 0));
+
+    const pathIndices = shouldDerive ? derivedIndices : providedIndices;
     
     // ✅ FIX: Validate all required fields exist
     const result = {
