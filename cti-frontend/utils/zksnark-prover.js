@@ -20,6 +20,9 @@
 
 import { ethers } from 'ethers';
 
+// Bump this whenever we change proving logic to ensure the browser is running the latest bundle.
+const PROVER_BUILD_ID = '2026-01-02T00:00Z-root-vs-ioc-fix-v2';
+
 // Configuration constants
 const CONFIG = {
   MERKLE_TREE_LEVELS: 20,           // DIRECTION1: Supports 1M+ contributors
@@ -555,6 +558,7 @@ export class ZKSnarkProver {
       }
 
       logger.info('🔐 Starting Groth16 zkSNARK proof generation...');
+  logger.info(`   Prover build: ${PROVER_BUILD_ID}`);
       logger.info(`   Address: ${address}`);
       logger.info(`   Anonymity set: ${this.contributorTree.contributorCount} contributors`);
 
@@ -671,6 +675,7 @@ export class ZKSnarkProver {
         const expectedRootHex = ethers.hexlify(merkleProofData.root);
 
         if (computedRootHex.toLowerCase() !== expectedRootHex.toLowerCase()) {
+          // Use both the logger and raw console errors so this is visible even if log filtering changes.
           logger.error('❌ Pre-prove Merkle root mismatch (will fail in-circuit)');
           logger.error(`   expectedRoot: ${expectedRootHex}`);
           logger.error(`   computedRoot: ${computedRootHex}`);
@@ -678,8 +683,17 @@ export class ZKSnarkProver {
           logger.error(`   leafIndex:    ${this.contributorTree?.contributors?.findIndex((c) => (typeof c === 'string' ? c : c?.address)?.toLowerCase?.() === address.toLowerCase())}`);
           logger.error(`   proofDepth:   ${paddedProof.length}`);
           logger.error(`   indicesAll0:  ${Array.isArray(paddedIndices) && paddedIndices.every((x) => Number(x) === 0)}`);
+          console.error('[ZK_PRECHECK_ROOT_MISMATCH]', {
+            expectedRootHex,
+            computedRootHex,
+            address,
+            proofDepth: paddedProof.length,
+            indicesAll0: Array.isArray(paddedIndices) && paddedIndices.every((x) => Number(x) === 0),
+            proverBuild: PROVER_BUILD_ID
+          });
           throw new Error(
-            'Merkle root mismatch before proving. The contributor tree proof/indices do not match the circuit leaf/root. ' +
+            'ZK_PRECHECK_ROOT_MISMATCH: Merkle root mismatch before proving. ' +
+              'The contributor tree proof/indices do not match the circuit leaf/root. ' +
               'Rebuild the server contributor tree and ensure the frontend is using the same file.'
           );
         }
@@ -703,8 +717,15 @@ export class ZKSnarkProver {
         logger.error(`   leafIndex:       ${merkleProofData.leafIndex ?? 'unknown'}`);
         logger.error(`   serverLeaf:      ${serverLeafHex}`);
         logger.error(`   computedLeaf:    ${circuitLeafHex}`);
+        console.error('[ZK_PRECHECK_LEAF_MISMATCH]', {
+          address,
+          leafIndex: merkleProofData.leafIndex ?? null,
+          serverLeafHex,
+          computedLeafHex: circuitLeafHex,
+          proverBuild: PROVER_BUILD_ID
+        });
         throw new Error(
-          'Leaf hashing mismatch between frontend and server tree. ' +
+          'ZK_PRECHECK_LEAF_MISMATCH: Leaf hashing mismatch between frontend and server tree. ' +
             'This usually means the address-to-field conversion differs (e.g., missing mod reduction / different Poseidon impl).'
         );
       }
