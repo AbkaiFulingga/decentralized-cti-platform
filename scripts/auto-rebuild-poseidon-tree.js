@@ -11,6 +11,10 @@ const path = require('path');
 const CHECK_INTERVAL = 60000; // Check every 60 seconds (DIRECTION1 specification)
 const OUTPUT_FILE = path.join(__dirname, '..', 'contributor-merkle-tree.json');
 const FRONTEND_FILE = path.join(__dirname, '..', 'cti-frontend', 'public', 'contributor-merkle-tree.json');
+// Optional local fallback for environments where events aren't available.
+// This file is intended to be created on the server (untracked) to ensure
+// the rebuilder can always produce an initial tree.
+const SEED_FILE = path.join(__dirname, '..', 'contributor-seed.json');
 const DEPLOYMENT_FILE_L2 = path.join(__dirname, '..', 'test-addresses-arbitrum.json');
 const DEPLOYMENT_FILE_L1 = path.join(__dirname, '..', 'test-addresses.json');
 // NOTE: Depth 20 (1,048,576 leaves) is expensive to rebuild frequently and can hit
@@ -140,7 +144,28 @@ async function fetchContributorsFallback(registry) {
     console.log(`⚠️  getPlatformStats() fallback unavailable: ${e.message}`);
   }
 
-  // 2) As a last-resort (until the registry adds an enumerator), keep existing proofs if present.
+  // 2) If a local seed file exists, use it.
+  // This is the most reliable fallback for networks/providers where events are empty.
+  try {
+    if (fs.existsSync(SEED_FILE)) {
+      const seedRaw = JSON.parse(fs.readFileSync(SEED_FILE, 'utf8'));
+      const seedList = Array.isArray(seedRaw) ? seedRaw : seedRaw?.contributors;
+      if (Array.isArray(seedList) && seedList.length > 0) {
+        const normalized = seedList
+          .map((c) => (typeof c === 'string' ? c : c?.address))
+          .filter((a) => typeof a === 'string' && a.startsWith('0x'))
+          .map((a) => a.toLowerCase());
+        if (normalized.length > 0) {
+          console.log(`🌱 Using ${normalized.length} contributors from seed file as fallback.`);
+          return normalized;
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`⚠️  Could not load seed file fallback: ${e.message}`);
+  }
+
+  // 3) As a last-resort (until the registry adds an enumerator), keep existing proofs if present.
   // This doesn't *fix* stale/invalid files on its own, but avoids hard failures when the file is missing.
   try {
     if (fs.existsSync(OUTPUT_FILE)) {
