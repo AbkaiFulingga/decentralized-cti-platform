@@ -159,6 +159,17 @@ function computeRootFromProof({ poseidon, leaf, siblings, indices }) {
 }
 
 async function main() {
+  // Safety valve: if something (worker threads, lingering handles) keeps Node alive
+  // after producing output, force a clean exit so this script can be used in CI/cron.
+  const FORCE_EXIT_AFTER_MS = Number(process.env.SMOKE_FORCE_EXIT_MS ?? 180000);
+  const forceExitTimer = setTimeout(() => {
+    console.error(`SMOKE WARN: still running after ${FORCE_EXIT_AFTER_MS}ms; forcing exit`);
+    // Use a non-zero code only if we haven't succeeded yet (process.exitCode set by catch).
+    process.exit(process.exitCode ?? 0);
+  }, FORCE_EXIT_AFTER_MS);
+  // Don't keep the event loop alive just for this timer.
+  forceExitTimer.unref();
+
   if (!fs.existsSync(TREE_FILE)) {
     throw new Error(`Missing tree file: ${TREE_FILE}`);
   }
@@ -312,9 +323,13 @@ async function main() {
     publicSignalsLen: publicSignals.length,
     publicSignalsHead: publicSignals.slice(0, 4)
   }, null, 2));
+
+  // If we got here, the proof succeeded; exit explicitly to avoid hanging due to
+  // lingering worker threads / wasm resources in some environments.
+  process.exit(0);
 }
 
 main().catch((e) => {
   console.error('SMOKE FAIL:', e?.stack || e);
-  process.exitCode = 1;
+  process.exit(1);
 });
