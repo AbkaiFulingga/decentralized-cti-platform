@@ -335,6 +335,9 @@ export class ZKSnarkProver {
       logger.info(`   - ${result.contributorCount} contributors in tree`);
       logger.info(`   - Merkle root: ${result.root}`);
       logger.info(`   - Last update: ${new Date(result.timestamp).toLocaleString()}`);
+      if (typeof result.treeDepth === 'number') {
+        logger.info(`   - Tree depth (server): ${result.treeDepth}`);
+      }
       
       // ✅ FIX: Improved freshness checking
       const ageHours = parseFloat(result.freshness?.ageHours || 0);
@@ -444,6 +447,16 @@ export class ZKSnarkProver {
     }
     
     logger.log('✅ Using precomputed Poseidon proof (depth:', proofData.proof.length, ')');
+
+    // Fail fast if the server is serving an unexpected proof depth. The circuit is fixed at 20.
+    // While we can *pad* shorter proofs, that only works if the server generated the tree with
+    // the same zero-subtree hashing semantics. To reduce footguns, enforce 20 by default.
+    if (proofData.proof.length !== CIRCUIT_LEVELS) {
+      throw new Error(
+        `Contributor proof depth mismatch: server proof depth is ${proofData.proof.length}, but circuit expects ${CIRCUIT_LEVELS}. ` +
+          'Regenerate contributor-merkle-tree.json at depth 20 (recommended).'
+      );
+    }
     
     // Prefer the precomputed `pathIndices` from the Poseidon tree builder.
     // However, we've seen some environments produce `pathIndices` that are missing
@@ -502,6 +515,7 @@ export class ZKSnarkProver {
     logger.log('✅ Merkle proof ready:', {
       pathElementsCount: result.pathElements.length,
       pathIndicesCount: result.pathIndices.length,
+      leafIndex: result.leafIndex,
       root: result.root
     });
 
@@ -611,6 +625,12 @@ export class ZKSnarkProver {
       // The circuit expects fixed-size arrays of length CIRCUIT_LEVELS.
       // However, the backend can emit shorter proofs (e.g. depth 8). We'll pad deterministically.
       const proofDepth = merkleProofData.pathElements.length;
+      if (proofDepth !== CIRCUIT_LEVELS) {
+        throw new Error(
+          `Unexpected proof depth ${proofDepth}. Expected ${CIRCUIT_LEVELS}. ` +
+            'This indicates the contributor tree JSON is not built for the fixed-depth circuit.'
+        );
+      }
 
   // Compute the circuit leaf (Poseidon(address)) — this is what the circuit uses internally.
   const circuitLeaf = await this._computeCircuitLeafFromAddress(addressBigInt);
@@ -668,29 +688,7 @@ export class ZKSnarkProver {
         throw e;
       }
 
-      // Truncate if a backend ever emits more than the circuit supports.
-      if (paddedProof.length > CIRCUIT_LEVELS) paddedProof.splice(CIRCUIT_LEVELS);
-      if (paddedIndices.length > CIRCUIT_LEVELS) paddedIndices.splice(CIRCUIT_LEVELS);
-
-      // Pad up to the circuit depth.
-      // IMPORTANT: We can't pad sibling hashes with literal 0.
-      // In a Poseidon Merkle tree, the sibling above the real depth is the root of an
-      // all-zero subtree and must be computed as:
-      //   z[0]=0, z[i+1]=Poseidon(z[i], z[i])
-      // Otherwise the circuit recomputed root will not match.
-      const zeroSubtreeRoots = await this._getZeroSubtreeRoots(CIRCUIT_LEVELS);
-      while (paddedProof.length < CIRCUIT_LEVELS) {
-        const level = paddedProof.length; // 0-based level index
-        paddedProof.push(zeroSubtreeRoots[level]);
-        // For the padded region our branch is always on the left (index 0)
-        // because we padded leaves by appending zeros.
-        paddedIndices.push(0);
-      }
-
-      // If the backend proofDepth is shorter, we should also ensure indices are padded.
-      while (paddedIndices.length < CIRCUIT_LEVELS) {
-        paddedIndices.push(0);
-      }
+      // Proofs are enforced to be fixed-length, so no padding/truncation should happen here.
 
       // ✅ Extra diagnostic: ensure our in-browser Poseidon(address) matches the server tree leaf.
       // The circuit computes leaf = Poseidon(address) internally, so if this check fails,

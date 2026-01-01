@@ -461,6 +461,13 @@ export default function IOCSubmissionForm() {
           // Generate zkSNARK proof using contributor-proof.circom (simple 2-input Poseidon)
           // Proves: commitment = Poseidon(address, nonce) AND address in Merkle tree
           const proof = await zksnarkProver.generateGroth16Proof(address);
+
+          // IMPORTANT: Anonymous mode uses the *contributor* Merkle root (Poseidon tree),
+          // not the IOC batch Merkle root (keccak tree). Mixing these causes verifier failure.
+          const contributorRoot = zksnarkProver.getAnonymitySetInfo()?.root;
+          if (!contributorRoot) {
+            throw new Error('Contributor tree root unavailable after proof generation');
+          }
           
           const proofTime = Date.now() - startTime;
           console.log(`✅ Proof generated in ${proofTime}ms (${(proofTime / 1000).toFixed(1)}s)`);
@@ -484,7 +491,8 @@ export default function IOCSubmissionForm() {
           console.log('📡 Submitting Anonymous Batch with Groth16 Proof');
           console.log('═══════════════════════════════════════════════════════');
           console.log('CID:', cid);
-          console.log('Merkle Root:', merkleRootHash);
+          console.log('IOC Merkle Root (keccak):', merkleRootHash);
+          console.log('Contributor Merkle Root (poseidon):', contributorRoot);
           console.log('Proof pA:', proof.pA);
           console.log('Proof pB:', proof.pB);
           console.log('Proof pC:', proof.pC);
@@ -503,7 +511,7 @@ export default function IOCSubmissionForm() {
           const tx = await registryWithZK.addBatchWithZKProof(
             { a: proof.pA, b: proof.pB, c: proof.pC },
             proof.commitment,
-            merkleRootHash,
+            contributorRoot,
             cid,
             {
               value: submissionFeeWithMargin,
