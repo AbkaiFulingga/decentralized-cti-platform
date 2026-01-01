@@ -53,5 +53,6 @@ build/
 *.temp
 
 # Generated contributor Poseidon Merkle tree snapshots (runtime artifacts)
+# Generated at runtime by the poseidon-tree-rebuilder (PM2). Do not commit.
 contributor-merkle-tree.json
 cti-frontend/public/contributor-merkle-tree.json
