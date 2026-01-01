@@ -196,6 +196,14 @@ async function buildPoseidonMerkleTree(contributors) {
   
   const poseidon = await initPoseidon();
   const F = poseidon.F;
+
+  // Precompute empty-subtree roots for correct padding.
+  // zero[0] = 0 (empty leaf), zero[h+1] = Poseidon(zero[h], zero[h]).
+  const zeroRoots = [0n];
+  for (let i = 0; i < TREE_DEPTH; i++) {
+    const out = poseidon([zeroRoots[i], zeroRoots[i]]);
+    zeroRoots.push(BigInt(F.toString(out)));
+  }
   
   // IMPORTANT: Leaf semantics must match the zk circuit.
   // The circuit uses: leaf = Poseidon(1)(address)
@@ -219,7 +227,7 @@ async function buildPoseidonMerkleTree(contributors) {
   const targetSize = Math.pow(2, TREE_DEPTH);
   let currentLevel = [...leaves];
   
-  while (currentLevel.length < targetSize) currentLevel.push(0n);
+  while (currentLevel.length < targetSize) currentLevel.push(zeroRoots[0]);
   console.log(`✅ Padded tree to ${targetSize} leaves (depth ${TREE_DEPTH})`);
 
   // Build tree level by level using Poseidon(2) hash
