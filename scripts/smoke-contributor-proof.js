@@ -139,7 +139,10 @@ async function main() {
   const realDepth = Number(tree.treeDepth ?? proof.treeDepth ?? (proof?.siblings?.length ?? 0));
   const leafIndex = BigInt(proof.leafIndex ?? 0);
 
-  const proofSiblings = proof.siblings;
+  // Tree JSON format produced by scripts/auto-rebuild-poseidon-tree.js:
+  //   proof.proof = array of sibling hashes (hex strings)
+  //   proof.pathIndices = array of 0/1 numbers
+  const proofSiblings = proof.proof;
   const proofPathIndices = proof.pathIndices;
 
   if (!Array.isArray(proofSiblings) || !Array.isArray(proofPathIndices)) {
