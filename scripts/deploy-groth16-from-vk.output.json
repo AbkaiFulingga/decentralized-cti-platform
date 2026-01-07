@@ -1,0 +1,6 @@
+{
+  "network": "arbitrumSepolia",
+  "deployedAt": "2026-01-02T14:17:04.683Z",
+  "groth16Verifier": "0xa98A34E321b5f00E29E62FaD03B25AC0B10C418b",
+  "source": "cti-frontend/public/circuits/contributor-proof_final.zkey"
+}

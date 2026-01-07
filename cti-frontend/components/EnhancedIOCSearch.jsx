@@ -9,6 +9,9 @@ export default function EnhancedIOCSearch() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [indexMeta, setIndexMeta] = useState(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexError, setReindexError] = useState(null);
   const [walletConnected, setWalletConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState('');
   const [expandedResult, setExpandedResult] = useState(null);
@@ -33,7 +36,42 @@ export default function EnhancedIOCSearch() {
         }
       };
     }
+
+    // Best-effort: get current index status so we can show helpful UX
+    // even before the user searches.
+    refreshIndexMeta();
   }, []);
+
+  const refreshIndexMeta = async () => {
+    try {
+      const resp = await fetch('/api/search?q=__stats__&limit=1', { cache: 'no-store' });
+      const json = await resp.json();
+      if (json?.meta?.index) setIndexMeta(json.meta.index);
+    } catch {
+      // ignore
+    }
+  };
+
+  const runReindex = async () => {
+    setReindexing(true);
+    setReindexError(null);
+    try {
+      const resp = await fetch('/api/search/reindex', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limitPins: 200, refreshExisting: true })
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok || json?.success === false) {
+        throw new Error(json?.error || `Reindex failed (${resp.status})`);
+      }
+      await refreshIndexMeta();
+    } catch (e) {
+      setReindexError(String(e?.message || e));
+    } finally {
+      setReindexing(false);
+    }
+  };
 
   const checkConnection = async () => {
     if (window.ethereum) {
@@ -103,6 +141,7 @@ export default function EnhancedIOCSearch() {
       try {
         const resp = await fetch(`/api/search/pins?q=${encodeURIComponent(rawQuery)}&limitPins=25&limitMatchesPerPin=20`);
         const json = await resp.json();
+        if (json?.meta?.index) setIndexMeta(json.meta.index);
         if (json?.success && Array.isArray(json.results)) {
           const pins = json.results;
 
@@ -140,9 +179,19 @@ export default function EnhancedIOCSearch() {
             return;
           }
 
-          // Render one result per CID ("file"), showing a preview list of matching IOCs.
-          const grouped = pins.map((p) => ({
-            ioc: `${p.matchCount} match(es) in CID ${String(p.cid).slice(0, 14)}…`,
+          // Render one result per CID ("file"), showing the actual plaintext IOCs that matched.
+          // This matches the original UX expectation: users want to see which IOCs matched,
+          // not just that a CID contained a match.
+          const grouped = pins.map((p) => {
+            const matchedIocs = Array.isArray(p.matches)
+              ? p.matches.map(m => m?.ioc).filter(Boolean)
+              : [];
+            const title = matchedIocs.length
+              ? matchedIocs.join(', ')
+              : `${p.matchCount} match(es) in CID ${String(p.cid).slice(0, 14)}…`;
+
+            return {
+            ioc: title,
             iocIndex: null,
             batch: {
               batchId: null,
@@ -157,7 +206,7 @@ export default function EnhancedIOCSearch() {
               isPublic: true,
               confirmations: 0,
               disputes: 0,
-              iocs: Array.isArray(p.matches) ? p.matches.map(m => m.ioc).filter(Boolean) : [],
+              iocs: matchedIocs,
               format: 'pinata-index',
               explorerUrl: null,
               registryAddress: null,
@@ -171,7 +220,8 @@ export default function EnhancedIOCSearch() {
             merkleProof: null,
             verified: null,
             source: 'pinata-search'
-          }));
+          };
+          });
 
           setSearchResults(grouped);
           setLoading(false);
@@ -330,6 +380,58 @@ export default function EnhancedIOCSearch() {
         <div className="mb-6">
           <h2 className="text-3xl font-bold text-white mb-2">🔍 Search Threat Intelligence</h2>
           <p className="text-gray-400">Fast keyword search across your Pinata-pinned IPFS bundles</p>
+        </div>
+
+        {/* Index status / self-heal */}
+        <div className="mb-6 p-4 bg-gray-900/40 border border-gray-700/60 rounded-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="text-gray-200 font-semibold flex items-center gap-2">
+                📇 Local Index
+                {indexMeta?.pinsIndexed === 0 ? (
+                  <span className="text-xs px-2 py-1 rounded-full bg-yellow-500/20 text-yellow-200 border border-yellow-500/30">Empty</span>
+                ) : (
+                  <span className="text-xs px-2 py-1 rounded-full bg-green-500/20 text-green-200 border border-green-500/30">Ready</span>
+                )}
+              </p>
+              <p className="text-sm text-gray-400 mt-1">
+                Pins indexed: <span className="text-gray-200 font-mono">{indexMeta?.pinsIndexed ?? '—'}</span> ·
+                IOCs indexed: <span className="text-gray-200 font-mono">{indexMeta?.iocsIndexed ?? '—'}</span>
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Last indexed: <span className="font-mono">{indexMeta?.lastIndexFinish || indexMeta?.lastIndexStart || '—'}</span>
+                {indexMeta?.pinataJwtConfigured === false ? (
+                  <span className="ml-2 text-red-300">(PINATA_JWT not configured)</span>
+                ) : null}
+              </p>
+              {reindexError ? <p className="text-xs text-red-300 mt-2">Reindex error: {reindexError}</p> : null}
+              {indexMeta?.pinsIndexed === 0 ? (
+                <p className="text-xs text-gray-500 mt-2">
+                  Search will return “no matches” until the local index is built. Click “Reindex now” to fetch recent pins from Pinata.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={refreshIndexMeta}
+                className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg text-sm border border-gray-700"
+              >
+                Refresh
+              </button>
+              <button
+                onClick={runReindex}
+                disabled={reindexing}
+                className={`px-3 py-2 rounded-lg text-sm border transition-all ${
+                  reindexing
+                    ? 'bg-gray-700 text-gray-400 border-gray-700 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white border-transparent'
+                }`}
+              >
+                {reindexing ? 'Reindexing…' : 'Reindex now'}
+              </button>
+            </div>
+          </div>
         </div>
 
         <>

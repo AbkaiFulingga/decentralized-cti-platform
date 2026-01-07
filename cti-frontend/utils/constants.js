@@ -33,11 +33,14 @@ export const NETWORKS = {
       decimals: 18
     },
     contracts: {
-      registry: "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44", // ✅ FIXED: PrivacyPreservingRegistry (from test-addresses-arbitrum.json)
-      governance: "0xa186FEE32e311f65C55612fc98195B27113d1e48", // ✅ FIXED: ThresholdGovernance
-      storage: "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd", // ✅ FIXED: StorageContribution
+      registry: "0x83b2f9036FE1EBE5B79376Afae42Af1946c0A91C", // ✅ PrivacyPreservingRegistry (ZK-enabled) - synced from test-addresses-arbitrum.json
+      governance: "0x1309C1a3166Cd31FA0f0A234aBf760254722Cf5B", // ✅ ThresholdGovernance - synced from test-addresses-arbitrum.json
+      storage: "0x768899dC8F79004c4f4635A6C54f696b0BeA0233", // ✅ StorageContribution - synced from test-addresses-arbitrum.json
       merkleZK: "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61", // MerkleZKRegistry (for anonymous submissions)
-      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE"
+      oracleFeed: "0xbdFcBE759232c9435FB4AdfF937A6173B5b904bE",
+      // ZK verifier currently used by the registry on Arbitrum Sepolia.
+      // Keep this in sync with on-chain `PrivacyPreservingRegistry.zkVerifier()`.
+      zkVerifier: "0xb509f336BB067225Fb2a2C3e7781593010036F57"
     },
     gasPrice: 0.1,
     gasPriceUnit: "Gwei"

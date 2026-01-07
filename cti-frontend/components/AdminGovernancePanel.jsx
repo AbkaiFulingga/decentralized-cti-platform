@@ -9,6 +9,8 @@ import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers
 export default function AdminGovernancePanel() {
   const [pendingBatches, setPendingBatches] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [approvingBatchId, setApprovingBatchId] = useState(null);
+  const [approvedByMe, setApprovedByMe] = useState({});
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [walletConnected, setWalletConnected] = useState(false);
@@ -16,6 +18,14 @@ export default function AdminGovernancePanel() {
   const [currentNetwork, setCurrentNetwork] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [expandedBatch, setExpandedBatch] = useState(null);
+
+  const getBatchStatus = (batch) => {
+    const threshold = Number(currentNetwork?.threshold || 3);
+    const approvals = Number(batch?.voteCount || 0);
+    if (batch?.executed) return 'executed';
+    if (approvals >= threshold) return 'verified';
+    return 'pending';
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -175,6 +185,7 @@ export default function AdminGovernancePanel() {
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      const signerAddr = (await signer.getAddress()).toLowerCase();
       const registryAddress = currentNetwork.contracts.registry;
       const governanceAddress = currentNetwork.contracts.governance;
       
@@ -185,14 +196,27 @@ export default function AdminGovernancePanel() {
       ];
       
       const governanceABI = [
-        "function getBatchApprovalStatus(uint256 batchIndex) external view returns (uint256 approvals, bool executed, uint256 createdAt)"
+        "function getBatchApprovalStatus(uint256 batchIndex) external view returns (uint256 approvals, bool executed, uint256 createdAt)",
+        "event BatchApproved(uint256 indexed batchIndex, address indexed admin)"
       ];
       
       const registry = new ethers.Contract(registryAddress, registryABI, signer);
       const governance = new ethers.Contract(governanceAddress, governanceABI, signer);
-      const count = await registry.getBatchCount();
+      // Some L2 RPCs are not archive-enabled and can throw "missing trie node" when providers
+      // implicitly use historical block tags. Always prefer latest-only reads and fall back.
+      let count;
+      try {
+        count = await registry.getBatchCount();
+      } catch (e) {
+        console.warn('getBatchCount failed; retrying against latest block tag', e?.shortMessage || e?.message || e);
+        const latest = await provider.getBlockNumber();
+        const raw = await provider.call({ to: registryAddress, data: '0xa8fabfa5' }, latest);
+        count = BigInt(raw);
+      }
+
+      const countNum = Number(count);
       
-      console.log(`Loading ${count} batches from ${currentNetwork.name}...`);
+  console.log(`Loading ${countNum} batches from ${currentNetwork.name}...`);
       
       // Query events to get CIDs with smart chunked queries (from deployment block)
       console.log('Fetching BatchAdded events...');
@@ -208,7 +232,8 @@ export default function AdminGovernancePanel() {
           rpcUrl: currentNetwork.rpcUrl,
           registry: registryAddress,
           deploymentBlock: String(currentNetwork.deploymentBlock || 0),
-          maxBlocks: currentNetwork.chainId === 11155111 ? '2000' : '20000',
+          // On Arbitrum, blocks move fast — we need a large lookback to include recent batch events.
+          maxBlocks: currentNetwork.chainId === 11155111 ? '2000' : '2000000',
           allowStale: '1'
         });
         const resp = await fetch(`/api/cid-map?${params.toString()}`);
@@ -230,21 +255,43 @@ export default function AdminGovernancePanel() {
         });
         console.log(`Retrieved ${events.length} events (from block ${startBlock})`);
       }
+
+      // Per-admin UX: figure out which batches the connected admin already approved.
+      // There's no public getter for hasApproved, so we infer it from the BatchApproved event.
+      const alreadyApproved = {};
+      try {
+        const latestBlock = await provider.getBlockNumber();
+        const blocksBack = currentNetwork.chainId === 11155111 ? 50_000 : 2_000_000;
+        const fromBlock = Math.max(0, latestBlock - blocksBack);
+        const filter = governance.filters.BatchApproved(null, signerAddr);
+        const logs = await governance.queryFilter(filter, fromBlock, latestBlock);
+        for (const ev of logs) {
+          const idx = Number(ev?.args?.batchIndex);
+          if (Number.isFinite(idx)) alreadyApproved[idx] = true;
+        }
+      } catch (e) {
+        console.warn('Could not load BatchApproved events for current admin:', e?.message || e);
+      }
+      setApprovedByMe(alreadyApproved);
       
       const pending = [];
       
-      for (let i = 0; i < count; i++) {
+  for (let i = 0; i < countNum; i++) {
         try {
           const batch = await registry.getBatch(i);
           
           // Check if batch is already executed in governance
           // Only show batches that are NOT accepted and NOT executed
           if (!batch.accepted) {
+            let govApprovals = 0;
+            let govExecuted = false;
             try {
               const approval = await governance.getBatchApprovalStatus(i);
               
               // approval is a tuple: [approvals, executed, createdAt]
+              govApprovals = Number(approval[0] || 0);
               const isExecuted = approval[1]; // executed field
+              govExecuted = Boolean(isExecuted);
               
               // Skip if governance has already executed this batch
               if (isExecuted) {
@@ -256,10 +303,11 @@ export default function AdminGovernancePanel() {
               // Continue anyway if governance check fails
             }
             
-            const cid = cidMap[i];
-            
-            // Only fetch if we have a valid CID
-            if (cid && !cid.startsWith('0x') && cid.length > 10) {
+            const cid = cidMap[String(i)];
+            const hasRealCid = !!(cid && typeof cid === 'string' && !cid.startsWith('0x') && cid.length > 10);
+
+            // Only fetch if we have a real CID (for anonymous submissions, the contract stores only cidCommitment)
+            if (hasRealCid) {
               const response = await fetch(`/api/ipfs-fetch?cid=${cid}`);
               const result = await response.json();
               
@@ -273,11 +321,13 @@ export default function AdminGovernancePanel() {
                   approved: batch.accepted,
                   contributorHash: batch.contributorHash,
                   isPublic: batch.isPublic,
-                  voteCount: Number(batch.confirmations),
+                  voteCount: govApprovals,
+                  executed: govExecuted,
                   falsePositives: Number(batch.falsePositives),
                   iocCount: result.data.iocs.length,
                   iocData: result.data,
-                  gateway: result.gateway
+                  gateway: result.gateway,
+                  approvedByMe: !!alreadyApproved[i]
                 });
               } else {
                 pending.push({
@@ -289,29 +339,36 @@ export default function AdminGovernancePanel() {
                   approved: batch.accepted,
                   contributorHash: batch.contributorHash,
                   isPublic: batch.isPublic,
-                  voteCount: Number(batch.confirmations),
+                  voteCount: govApprovals,
+                  executed: govExecuted,
                   falsePositives: Number(batch.falsePositives),
                   iocCount: 0,
                   iocData: null,
-                  error: 'IPFS data unavailable'
+                  error: 'IPFS data unavailable',
+                  approvedByMe: !!alreadyApproved[i]
                 });
               }
             } else {
-              console.warn(`Invalid or missing CID for batch ${i}`);
+              // Anonymous batches are expected to NOT have a recoverable CID from state.
+              // The contract stores cidCommitment (keccak256(CID)) for privacy and only emits the
+              // plaintext CID in events (which may not be available in our cache window).
+              console.warn(`No plaintext CID available for batch ${i} (likely anonymous).`);
               pending.push({
                 id: i,
-                cid: 'Invalid CID',
+                cid: null,
                 cidCommitment: batch.cidCommitment,
                 merkleRoot: batch.merkleRoot,
                 timestamp: new Date(Number(batch.timestamp) * 1000).toLocaleString(),
                 approved: batch.accepted,
                 contributorHash: batch.contributorHash,
                 isPublic: batch.isPublic,
-                voteCount: Number(batch.confirmations),
+                voteCount: govApprovals,
+                executed: govExecuted,
                 falsePositives: Number(batch.falsePositives),
                 iocCount: 0,
                 iocData: null,
-                error: 'No valid CID found'
+                error: batch.isPublic ? 'No CID found' : 'Anonymous batch: CID is private (only commitment stored on-chain)',
+                approvedByMe: !!alreadyApproved[i]
               });
             }
             
@@ -337,6 +394,7 @@ export default function AdminGovernancePanel() {
     try {
       setError('');
       setSuccessMessage('');
+      setApprovingBatchId(batchId);
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       const governanceAddress = currentNetwork.contracts.governance;
@@ -348,7 +406,39 @@ export default function AdminGovernancePanel() {
       const governance = new ethers.Contract(governanceAddress, governanceABI, signer);
       
       console.log(`Approving batch ${batchId} on ${currentNetwork.name}...`);
-      const tx = await governance.approveBatch(batchId, { gasLimit: 200000 });
+
+      // Fee+gas handling: some RPCs / MetaMask routes can choke on fee discovery.
+      // We try EIP-1559 first; fall back to legacy gasPrice; and always estimate gas.
+      let overrides = {};
+      try {
+        const feeData = await provider.getFeeData();
+        if (feeData?.maxFeePerGas && feeData?.maxPriorityFeePerGas) {
+          overrides.maxFeePerGas = feeData.maxFeePerGas;
+          overrides.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+        } else if (feeData?.gasPrice) {
+          overrides.gasPrice = feeData.gasPrice;
+        }
+      } catch (e) {
+        console.warn('Fee data unavailable; will rely on wallet defaults', e?.message || e);
+      }
+
+      // Preflight to surface revert reasons (if any) before eth_sendTransaction
+      try {
+        await governance.approveBatch.staticCall(batchId, overrides);
+      } catch (e) {
+        console.warn('approveBatch staticCall failed (may still be estimatable):', e?.shortMessage || e?.message || e);
+      }
+
+      let gasLimit;
+      try {
+        const est = await governance.approveBatch.estimateGas(batchId, overrides);
+        gasLimit = (est * 12n) / 10n; // +20% buffer
+      } catch (e) {
+        console.warn('Gas estimation failed; falling back to fixed gasLimit', e?.shortMessage || e?.message || e);
+        gasLimit = 300000n;
+      }
+
+      const tx = await governance.approveBatch(batchId, { ...overrides, gasLimit });
       
       console.log("Approval tx:", tx.hash);
       setSuccessMessage(`⏳ Approval transaction submitted: ${tx.hash.slice(0, 10)}... - waiting for confirmation`);
@@ -357,6 +447,14 @@ export default function AdminGovernancePanel() {
       
       console.log("✅ Batch approved!");
       setSuccessMessage(`✅ Batch #${batchId} approved successfully on ${currentNetwork.name}! Processing...`);
+
+      // Refresh promptly so the UI shows updated approval count / Verified state.
+      // (We still keep the delayed refresh to catch any eventual execution/removal.)
+      try {
+        await loadPendingBatches();
+      } catch {
+        // ignore
+      }
       
       // Auto-refresh after 5 seconds to hide approved batches
       setTimeout(() => {
@@ -367,6 +465,14 @@ export default function AdminGovernancePanel() {
     } catch (error) {
       console.error('Approval error:', error);
       setError(`Failed to approve batch: ${error.message}`);
+      // Even on revert, update the UI quickly — the batch may have been approved already by someone else.
+      try {
+        await loadPendingBatches();
+      } catch {
+        // ignore
+      }
+    } finally {
+      setApprovingBatchId(null);
     }
   };
 
@@ -523,6 +629,28 @@ export default function AdminGovernancePanel() {
                           <div className="px-3 py-1 bg-yellow-500/20 text-yellow-400 rounded-full text-xs font-semibold border border-yellow-500/30">
                             {batch.voteCount} confirmations
                           </div>
+                          {(() => {
+                            const status = getBatchStatus(batch);
+                            if (status === 'verified') {
+                              return (
+                                <div className="px-3 py-1 bg-green-500/20 text-green-400 rounded-full text-xs font-semibold border border-green-500/30">
+                                  ✅ Verified
+                                </div>
+                              );
+                            }
+                            if (status === 'executed') {
+                              return (
+                                <div className="px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full text-xs font-semibold border border-blue-500/30">
+                                  🧾 Executed
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="px-3 py-1 bg-yellow-500/10 text-yellow-300 rounded-full text-xs font-semibold border border-yellow-500/20">
+                                ⏳ Pending
+                              </div>
+                            );
+                          })()}
                           {batch.falsePositives > 0 && (
                             <div className="px-3 py-1 bg-red-500/20 text-red-400 rounded-full text-xs font-semibold border border-red-500/30">
                               {batch.falsePositives} disputes
@@ -541,9 +669,20 @@ export default function AdminGovernancePanel() {
                         
                         <div>
                           <span className="text-gray-500">IPFS CID:</span>
-                          <p className="text-blue-400 font-mono break-all">
-                            {batch.cid.substring(0, 20)}...
-                          </p>
+                          {batch.cid ? (
+                            <p className="text-blue-400 font-mono break-all">
+                              {batch.cid.substring(0, 20)}...
+                            </p>
+                          ) : (
+                            <div>
+                              <p className="text-gray-400 text-sm">
+                                {batch.isPublic ? '(CID unavailable right now)' : '(anonymous: CID not stored on-chain)'}
+                              </p>
+                              <p className="text-blue-400 font-mono break-all">
+                                commitment: {batch.cidCommitment.substring(0, 10)}...{batch.cidCommitment.substring(58)}
+                              </p>
+                            </div>
+                          )}
                         </div>
                         
                         <div>
@@ -571,9 +710,18 @@ export default function AdminGovernancePanel() {
                         
                         <button
                           onClick={() => approveBatch(batch.id)}
-                          className="px-6 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-semibold rounded-lg transition-all transform hover:scale-105 shadow-lg"
+                          disabled={approvingBatchId === batch.id || batch.approvedByMe || getBatchStatus(batch) !== 'pending'}
+                          className={`px-6 py-2 text-white font-semibold rounded-lg transition-all shadow-lg ${
+                            (approvingBatchId === batch.id || batch.approvedByMe || getBatchStatus(batch) !== 'pending')
+                              ? 'bg-gray-600 cursor-not-allowed opacity-70'
+                              : 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 transform hover:scale-105'
+                          }`}
                         >
-                          ✅ Approve Batch
+                          {approvingBatchId === batch.id
+                            ? '⏳ Approving…'
+                            : (batch.approvedByMe
+                              ? '✅ Approved by you'
+                              : (getBatchStatus(batch) === 'pending' ? '✅ Approve Batch' : '✅ Verified'))}
                         </button>
                       </div>
                     </div>
@@ -630,14 +778,16 @@ export default function AdminGovernancePanel() {
                             🔗 View Contract
                           </a>
                           
-                          <a
-                            href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
-                          >
-                            📦 View on IPFS
-                          </a>
+                          {batch.cid && (
+                            <a
+                              href={`https://gateway.pinata.cloud/ipfs/${batch.cid}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-semibold transition-all"
+                            >
+                              📦 View on IPFS
+                            </a>
+                          )}
                         </div>
                       </div>
                     )}

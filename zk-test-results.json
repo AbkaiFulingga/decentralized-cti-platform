@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-01-02T15:17:38.059Z",
+  "network": "hardhat",
+  "batchIndex": "1",
+  "commitment": "0x1845790657464e98e8973c52b0815d115209f6168d650b94a3324322dcee1f9d",
+  "ipfsCid": "QmQhrhaqqn5zxuikjUZDhjFhbijvy74gSVsyhpj9yTvukH",
+  "metrics": {
+    "proofGenerationTime": "1.23",
+    "gasUsed": "383680",
+    "proofSize": 721,
+    "transactionHash": "0xb13bbbb9f4f3250668f4d501ed1f304378a226c9ca4b917333698736a79d3cd5"
+  }
+}

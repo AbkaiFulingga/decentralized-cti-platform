@@ -23,11 +23,13 @@ module.exports = {
     sepolia: {
       url: process.env.SEPOLIA_RPC_URL || "https://eth-sepolia.g.alchemy.com/v2/demo",
       chainId: 11155111,
+      // Allow local read-only scripts to run without requiring private keys.
+      // Hardhat validates key length strictly; filter out empty/short values.
       accounts: [
         process.env.PRIVATE_KEY_ADMIN1,
         process.env.PRIVATE_KEY_ADMIN2,
         process.env.PRIVATE_KEY_ADMIN3
-      ].filter(key => key !== undefined),
+      ].filter((key) => typeof key === 'string' && /^0x[0-9a-fA-F]{64}$/.test(key.trim())),
       timeout: 60000,
       gasPrice: 20000000000, // 20 Gwei
       gas: 5000000,
@@ -39,11 +41,12 @@ module.exports = {
     arbitrumSepolia: {
       url: process.env.ARBITRUM_RPC || "https://sepolia-rollup.arbitrum.io/rpc",
       chainId: 421614,
+      // Allow local read-only scripts to run without requiring private keys.
       accounts: [
         process.env.PRIVATE_KEY_ADMIN1,
         process.env.PRIVATE_KEY_ADMIN2,
         process.env.PRIVATE_KEY_ADMIN3
-      ].filter(key => key !== undefined),
+      ].filter((key) => typeof key === 'string' && /^0x[0-9a-fA-F]{64}$/.test(key.trim())),
       timeout: 60000,
       gasPrice: 100000000, // 0.1 Gwei
       gas: 5000000

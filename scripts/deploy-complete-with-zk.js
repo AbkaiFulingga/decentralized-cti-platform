@@ -13,21 +13,41 @@ const path = require('path');
 async function main() {
     console.log("🚀 Starting complete deployment with zkSNARK integration...\n");
 
-    const [admin1, admin2, admin3] = await ethers.getSigners();
+    // Allow running with only a single configured private key.
+    // If admin2/admin3 are missing, reuse admin1 so deployment can proceed.
+    const signers = await ethers.getSigners();
+    const admin1 = signers[0];
+    const admin2 = signers[1] || admin1;
+    const admin3 = signers[2] || admin1;
     console.log("📋 Deployment Details:");
     console.log(`Network: ${network.name}`);
     console.log(`Admin 1 (Deployer): ${admin1.address}`);
     console.log(`Admin 2: ${admin2.address}`);
     console.log(`Admin 3: ${admin3.address}\n`);
 
-    // Load existing ZKVerifier address
+    // Load existing ZKVerifier address (supports multiple JSON formats)
+    // Preferred: deployments/zkverifier-arbitrum.json (top-level `zkVerifier`)
+    // Fallback: deployment-complete-zk.json / other files with `contracts.zkVerifier`.
     let zkVerifierAddress;
-    try {
-        const addresses = JSON.parse(fs.readFileSync('test-addresses-arbitrum.json', 'utf8'));
-        zkVerifierAddress = addresses.zkVerifier;
-        console.log(`✅ Found existing ZKVerifier: ${zkVerifierAddress}\n`);
-    } catch (error) {
-        console.log("⚠️  ZKVerifier not found. Deploy it first with deploy-zkverifier.js");
+    const zkVerifierCandidates = [
+        'deployments/zkverifier-arbitrum.json',
+        'deployment-complete-zk.json',
+        'test-addresses-arbitrum.json'
+    ];
+    for (const filename of zkVerifierCandidates) {
+        try {
+            const parsed = JSON.parse(fs.readFileSync(filename, 'utf8'));
+            zkVerifierAddress = parsed?.zkVerifier || parsed?.contracts?.zkVerifier;
+            if (zkVerifierAddress) {
+                console.log(`✅ Found existing ZKVerifier (${filename}): ${zkVerifierAddress}\n`);
+                break;
+            }
+        } catch (_) {
+            // ignore
+        }
+    }
+    if (!zkVerifierAddress) {
+        console.log("⚠️  ZKVerifier address not found. Deploy it first with scripts/deploy-zkverifier.js");
         process.exit(1);
     }
 
@@ -48,9 +68,9 @@ async function main() {
     console.log("📦 Step 2: Deploying ThresholdGovernance...");
     const Governance = await ethers.getContractFactory("ThresholdGovernance");
     const governance = await Governance.deploy(
-        registryAddress,
         [admin1.address, admin2.address, admin3.address],
-        2  // 2-of-3 threshold
+        3, // 3-of-3 threshold (matches platform design)
+        registryAddress
     );
     await governance.waitForDeployment();
     const governanceAddress = await governance.getAddress();
@@ -62,7 +82,7 @@ async function main() {
 
     console.log("📦 Step 3: Deploying StorageContribution...");
     const Storage = await ethers.getContractFactory("StorageContribution");
-    const storage = await Storage.deploy(registryAddress);
+    const storage = await Storage.deploy(registryAddress, governanceAddress);
     await storage.waitForDeployment();
     const storageAddress = await storage.getAddress();
     console.log(`✅ StorageContribution deployed: ${storageAddress}`);

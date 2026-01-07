@@ -1,9 +1,9 @@
 {
   "network": "arbitrumSepolia",
   "chainId": "421614",
-  "PrivacyPreservingRegistry": "0x70Fa3936b036c62341f8F46DfF0bC45389e4dC44",
-  "ThresholdGovernance": "0xa186FEE32e311f65C55612fc98195B27113d1e48",
-  "StorageContribution": "0xBBCC5a5c29Fbf3aB8B97a4869871C70fADE6C0Cd",
+  "PrivacyPreservingRegistry": "0x83b2f9036FE1EBE5B79376Afae42Af1946c0A91C",
+  "ThresholdGovernance": "0x1309C1a3166Cd31FA0f0A234aBf760254722Cf5B",
+  "StorageContribution": "0x768899dC8F79004c4f4635A6C54f696b0BeA0233",
   "admins": [
     "0x26337D3C3C26979ABD78A0209eF1b9372f6EAe82",
     "0xf78afa5E41eDF35c05c1aEB082C1789283b09d3B",
@@ -33,6 +33,12 @@
   },
   "deployedAt": "2025-11-01T18:20:48.835Z",
   "MerkleZKRegistry": "0x8582cf2D5314781d04e7b35e7e553fC9dA14Ac61",
+  "zkVerifier": "0xd3eEe45D7b1106017ad83e39b1f5817D51b4CD9f",
+  "groth16Verifier": "0xa98A34E321b5f00E29E62FaD03B25AC0B10C418b",
   "merkleZKLinked": true,
-  "merkleZKRedeployed": "2025-12-02T17:09:17.977Z"
+  "merkleZKRedeployed": "2025-12-02T17:09:17.977Z",
+  "redeployedWithZKAt": "2026-01-02T00:00:00.000Z",
+  "ZKVerifier": "0xa9C329eDCB699671E733622d5BfE2A240d6BBb6C",
+  "zkVerifierRedeployedAt": "2026-01-07T00:41:01.325Z",
+  "zkVerifierRedeployReason": "Quick-add-valid-root: re-seed verifier with proof root"
 }

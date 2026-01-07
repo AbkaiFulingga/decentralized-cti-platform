@@ -252,23 +252,39 @@ export async function GET(request) {
     }
   }
 
-  // BatchAdded(uint256 indexed index, string cid, ...)
+  // L2 scanning: on Arbitrum the chain moves fast and callers typically want "recent" batches.
+  // Using deploymentBlock as the scan anchor can leave us permanently behind (you'd need to scan
+  // tens of millions of blocks). Instead, treat maxBlocks as a lookback window from the chain tip.
+  // If callers want a full historical scan, they can either (a) call repeatedly and rely on
+  // lastScannedBlock progress, or (b) set deploymentBlock close to the expected activity.
+  const inferredStartFromLatest = Math.max(0, latestBlock - Math.max(1, maxBlocks));
+  const startBlock = Number(chainId) === 421614
+    ? inferredStartFromLatest
+    : Math.max(deploymentBlock || 0, inferredStartFromLatest);
+
+  // BatchAdded on PrivacyPreservingRegistry (matches deployed ABI)
+  // event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)
   const abi = [
     'event BatchAdded(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, bool isPublic, bytes32 contributorHash)'
   ];
-  const registry = new ethers.Contract(registryAddress, abi, provider);
+  const zkAbi = [
+    'event BatchAddedWithZKProof(uint256 indexed index, string cid, bytes32 cidCommitment, bytes32 merkleRoot, uint256 commitment, uint256 contributorMerkleRoot)'
+  ];
+
+  const registry = new ethers.Contract(registryAddress, [...abi, ...zkAbi], provider);
   const filter = registry.filters.BatchAdded();
+  const filterZk = registry.filters.BatchAddedWithZKProof();
 
   let cidMap = existing?.cidMap || {};
   // Start from the next unscanned block, but never before deploymentBlock.
   // If deploymentBlock changes between deploys, this guarantees we don't miss early events.
   let start = existing?.lastScannedBlock
-    ? Math.min(Math.max(existing.lastScannedBlock + 1, deploymentBlock), latestBlock)
-    : deploymentBlock;
+    ? Math.min(Math.max(existing.lastScannedBlock + 1, startBlock), latestBlock)
+    : startBlock;
   if (!start || Number.isNaN(start)) start = 0;
 
   // Don't scan from 0 accidentally.
-  if (start === 0 && deploymentBlock > 0) start = deploymentBlock;
+  if (start === 0 && startBlock > 0) start = startBlock;
 
   // If caller didn't provide a deployment block (or provided 0), avoid scanning from genesis.
   // A cold cache should still pick up recent batches; callers can pass deploymentBlock for full correctness.
@@ -308,8 +324,12 @@ export async function GET(request) {
       };
 
       try {
-        const evs = await registry.queryFilter(filter, from, to);
+        const [evs, zkEvs] = await Promise.all([
+          registry.queryFilter(filter, from, to),
+          registry.queryFilter(filterZk, from, to)
+        ]);
         applyEvents(evs);
+        applyEvents(zkEvs);
       } catch (e) {
         const msg = String(e?.message || e);
         if (

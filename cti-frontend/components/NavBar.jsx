@@ -150,17 +150,6 @@ export default function NavBar() {
             >
               🛡️ Admin
             </Link>
-  
-            <Link
-              href="/news"
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                isActive('/news')
-                  ? 'bg-purple-600 text-white'
-                  : 'text-gray-300 hover:bg-gray-800'
-              }`}
-            >
-              📡 Oracle Feeds
-            </Link>
           </div>
   
           <div>

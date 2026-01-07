@@ -343,16 +343,33 @@ export class ZKSnarkProver {
       }
       
       // ✅ FIX: Improved freshness checking
-      const ageHours = parseFloat(result.freshness?.ageHours || 0);
-      if (ageHours > ZKSnarkProver.STALENESS_ERROR_HOURS) {
-        throw new Error(`Tree is critically stale (${ageHours.toFixed(1)} hours old). Rebuilder may be down.`);
-      } else if (ageHours > ZKSnarkProver.STALENESS_WARNING_HOURS) {
+      // API returns ageHours as a string via toFixed(1); normalize to Number.
+      const ageHoursRaw = result.freshness?.ageHours;
+      const ageHours = Number(ageHoursRaw ?? 0);
+
+      // IMPORTANT: A stale tree should NOT hard-crash the entire submit UX.
+      // We treat this as a warning here and let the submit form decide what & how to block.
+      // (Anonymous submissions still won't succeed if the address isn't in-tree / proof doesn't match.)
+      const isCriticallyStale = Number.isFinite(ageHours) && ageHours > ZKSnarkProver.STALENESS_ERROR_HOURS;
+      const isStaleWarning = Number.isFinite(ageHours) && ageHours > ZKSnarkProver.STALENESS_WARNING_HOURS;
+
+      if (isCriticallyStale) {
+        logger.warn(`⚠️  Tree is critically stale (${ageHours.toFixed(1)} hours old). Rebuilder may be down.`);
+      } else if (isStaleWarning) {
         logger.warn(`⚠️  Tree is ${ageHours.toFixed(1)} hours old (expected <2h with 60s rebuild interval)`);
       } else {
         logger.log(`✅ Tree freshness: ${ageHours.toFixed(1)} hours (good)`);
       }
-      
-      return true;
+
+      // Attach derived freshness flags for downstream UI decisions.
+      this.contributorTree.freshness = {
+        ...(this.contributorTree.freshness || {}),
+        ageHours: Number.isFinite(ageHours) ? ageHours : 0,
+        isCriticallyStale,
+        isStaleWarning,
+      };
+
+      return { loaded: true, isCriticallyStale, ageHours };
       
     } catch (error) {
       logger.error('❌ Failed to load contributor tree:', error);
@@ -484,15 +501,20 @@ export class ZKSnarkProver {
       ? normalizeBits(proofData.pathIndices)
       : null;
 
-    // If provided indices are missing OR clearly suspicious (all zeros), override.
-    // For a single-leaf set, the correct indices are all 0 anyway, so this is safe.
-    // For multi-leaf trees, this restores correct left/right orientation.
-    const shouldDerive =
-      !providedIndices ||
-      providedIndices.length === 0 ||
-      (providedIndices.length > 0 && providedIndices.every((b) => b === 0));
+    // Decide whether to trust the server-provided indices.
+    // IMPORTANT: leafIndex 0 legitimately produces all-zero bits, so "all zeros" is NOT suspicious.
+    // We only derive when indices are missing/invalid/wrong length, or when they don't match the
+    // deterministic bit pattern for leafIndex.
+    const hasValidProvided =
+      Array.isArray(providedIndices) &&
+      providedIndices.length === ZKSnarkProver.MERKLE_TREE_LEVELS &&
+      providedIndices.every((b) => b === 0 || b === 1);
 
-    const pathIndices = shouldDerive ? derivedIndices : providedIndices;
+    const matchesDerived =
+      hasValidProvided &&
+      providedIndices.every((b, i) => b === derivedIndices[i]);
+
+    const pathIndices = matchesDerived ? providedIndices : derivedIndices;
     
     // ✅ FIX: Validate all required fields exist
     const result = {
@@ -543,6 +565,8 @@ export class ZKSnarkProver {
    */
   async generateGroth16Proof(address) {
     const startTime = Date.now();
+    // Populated right before witness generation so we can attach it to any circom assert failures.
+    let inputSummary = null;
     
     try {
       // ✅ FIX: Ensure snarkjs is loaded (no race condition)
@@ -636,7 +660,8 @@ export class ZKSnarkProver {
         );
       }
 
-  // Compute the circuit leaf (Poseidon(address)) — this is what the circuit uses internally.
+  // IMPORTANT: For contributor-proof.circom, the Merkle checker leaf is Poseidon(address).
+  // We compute it here for prechecks only.
   const circuitLeaf = await this._computeCircuitLeafFromAddress(addressBigInt);
 
       if (!Array.isArray(merkleProofData.pathIndices) || merkleProofData.pathIndices.length === 0) {
@@ -704,6 +729,13 @@ export class ZKSnarkProver {
 
       // Proofs are enforced to be fixed-length, so no padding/truncation should happen here.
 
+      // 🔔 Always-on banner so we can prove the browser is running the latest code.
+      // This should appear on every proof attempt.
+      console.log(
+        `[ZK_PROVER_BANNER] build=${PROVER_BUILD_ID} addr=${address} leafIndex=${merkleProofData.leafIndex} ` +
+          `proofDepth=${proofDepth} root=${contributorTreeRoot}`
+      );
+
       // ✅ Extra diagnostic: ensure our in-browser Poseidon(address) matches the server tree leaf.
       // The circuit computes leaf = Poseidon(address) internally, so if this check fails,
       // the circom assert at line ~97 is guaranteed to fail.
@@ -758,7 +790,7 @@ export class ZKSnarkProver {
         throw new Error(`Invalid indices length: ${paddedIndices.length} (expected ${CIRCUIT_LEVELS})`);
       }
 
-      const circuitInputs = {
+  const circuitInputs = {
         // Public inputs
         // NOTE: snarkjs + circom witness calculator expects inputs as
         // JSON-serializable values (string/number/array). Passing BigInt can
@@ -773,6 +805,20 @@ export class ZKSnarkProver {
         merkleProof: paddedProof.map(p => p.toString()),
         merklePathIndices: paddedIndices.map((v) => Number(v))
       };
+
+      // Extra compact summary right before witness generation.
+      // If this prints but the ZK_PRECHECK_* markers don't, the assert is likely a different constraint.
+      inputSummary = {
+        proverBuild: PROVER_BUILD_ID,
+        address,
+        leafIndex: merkleProofData.leafIndex ?? null,
+        merkleRootHex: contributorTreeRoot,
+        merkleRootDec: circuitInputs.merkleRoot,
+        leafHex: ethers.toBeHex(ethers.toBigInt(merkleProofData.leaf), 32),
+        indicesHead: paddedIndices.slice(0, 8).map((x) => Number(x)),
+        proofHead: paddedProof.slice(0, 2).map((x) => ethers.toBeHex(x, 32))
+      };
+      console.log('[ZK_INPUTS_SUMMARY]', inputSummary);
 
       logger.info('   ✅ Circuit inputs validated');
       logger.log(
@@ -805,6 +851,24 @@ export class ZKSnarkProver {
         proofPromise,
         timeoutPromise
       ]);
+
+      // ✅ Demo-critical invariant: the proof must be generated against the currently loaded tree root.
+      // Groth16 binds the public signals, so if the root differs, on-chain verification will always fail.
+      try {
+        const expectedRootBI = ethers.toBigInt(contributorTreeRoot);
+        const actualRootBI = BigInt(publicSignals?.[1] ?? '0');
+        if (actualRootBI !== expectedRootBI) {
+          throw new Error(
+            'ZK_PROOF_ROOT_MISMATCH: proof publicSignals[1] does not match loaded contributor tree root.\n' +
+              `  proofRoot(dec): ${actualRootBI.toString()}\n` +
+              `  expected(dec):  ${expectedRootBI.toString()}\n` +
+              `  expected(hex):  ${contributorTreeRoot}`
+          );
+        }
+      } catch (e) {
+        // Surface as a clear, actionable error instead of silently producing an unusable proof.
+        throw e;
+      }
       
       const proofTime = Date.now() - proofStartTime;
       logger.info(`   ✅ Proof computed in ${proofTime}ms`);
@@ -859,6 +923,18 @@ export class ZKSnarkProver {
       } else if (error.message.includes('timeout')) {
         throw new Error('Proof generation timeout: Browser may be too slow or circuit files missing');
       } else {
+        // If this is the common witness-calculator assert, attach the input summary to make debugging deterministic.
+        const isCircomAssert =
+          typeof error?.message === 'string' &&
+          (error.message.includes('Assert Failed') || error.message.includes('Error in template'));
+
+        if (isCircomAssert) {
+          throw new Error(
+            `Proof generation failed: ${error.message}\n` +
+            `ZK_INPUTS_SUMMARY: ${inputSummary ? JSON.stringify(inputSummary) : 'unavailable'}`
+          );
+        }
+
         throw new Error(`Proof generation failed: ${error.message}`);
       }
     }

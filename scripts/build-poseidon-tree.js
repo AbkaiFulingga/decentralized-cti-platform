@@ -29,9 +29,14 @@ async function main() {
     const poseidon = await buildPoseidon();
     const F = poseidon.F;
 
-    // Convert addresses to BigInt leaves
-    const leaves = contributors.map(addr => ethers.toBigInt(addr));
-    console.log("✅ Converted addresses to BigInt leaves\n");
+    // IMPORTANT: Leaves must match the zk circuit:
+    // leaf = Poseidon(1)(address)
+    const addressBigInts = contributors.map(addr => ethers.toBigInt(addr));
+    const leaves = addressBigInts.map((a) => {
+        const out = poseidon([a]);
+        return BigInt(F.toString(out));
+    });
+    console.log("✅ Converted addresses to Poseidon(address) leaves\n");
 
     // Build Merkle tree manually using Poseidon
     // Tree depth = 20 (same as circuit)
@@ -57,8 +62,7 @@ async function main() {
             
             // Hash with Poseidon(2)
             const hash = poseidon([left, right]);
-            const hashBigInt = F.toObject(hash);
-            nextLevel.push(hashBigInt);
+            nextLevel.push(BigInt(F.toString(hash)));
         }
         currentLevel = nextLevel;
         tree.push(currentLevel);

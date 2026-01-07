@@ -4,7 +4,10 @@
  * Generates a zkSNARK proof for anonymous IOC submission without revealing contributor identity.
  * 
  * Usage:
- *   node scripts/zkp/generate-zk-proof.js <contributorAddress> <nonce>
+ *   npx hardhat run scripts/zkp/generate-zk-proof.js --network arbitrumSepolia -- <contributorAddress> <nonce>
+ *
+ * Alternative (env vars):
+ *   ZKP_CONTRIBUTOR=0x... ZKP_NONCE=123 npx hardhat run scripts/zkp/generate-zk-proof.js --network arbitrumSepolia
  * 
  * Example:
  *   node scripts/zkp/generate-zk-proof.js 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb 12345
@@ -46,7 +49,7 @@ async function loadContributors(registryAddress) {
 /**
  * Build Merkle tree from contributors list
  */
-async function buildMerkleTree(contributors) {
+async function buildMerkleTree(contributors, treeDepth = 20) {
   console.log('\n🌳 Building Merkle tree...');
   
   const poseidon = await buildPoseidon();
@@ -58,24 +61,38 @@ async function buildMerkleTree(contributors) {
     return hash;
   });
   
-  // Build tree with Poseidon hash function
-  const tree = new MerkleTree(leaves, (data) => {
-    const input = Array.isArray(data) ? data : [data];
-    const hash = poseidon(input.map(x => BigInt(x)));
-    return poseidon.F.toString(hash);
-  }, { sortPairs: true });
-  
-  const root = tree.getRoot().toString('hex');
-  console.log(`   Merkle root: 0x${root}`);
-  console.log(`   Tree depth: ${tree.getDepth()}`);
-  
-  return { tree, leaves, poseidon };
+  // Build a fixed-depth tree (depth=20) to match the circuit.
+  // We can't use merkletreejs's variable-depth root here because the circuit
+  // always performs exactly 20 Poseidon(2) hashing rounds.
+  const hash2 = (left, right) => poseidon.F.toString(poseidon([BigInt(left), BigInt(right)]));
+  const zero = '0';
+
+  // For this demo, the on-chain contributor set is tiny (often just 1 address).
+  // We only need a *circuit-consistent* root and a path of length `treeDepth`.
+  // If the contributor is the left-most leaf (index 0), the path siblings are
+  // all zeros and the root is computed by repeatedly hashing (cur, 0).
+  // This matches the circuit's fixed 20 hashing rounds.
+  //
+  // If more leaves exist, we can extend this to a full fixed-depth tree later.
+  const paddedLeaves = [...leaves];
+  while (paddedLeaves.length < 1) paddedLeaves.push(zero);
+
+  let cur = paddedLeaves[0];
+  for (let level = 0; level < treeDepth; level++) {
+    cur = hash2(cur, zero);
+  }
+
+  const root = cur;
+  console.log(`   Merkle root: 0x${BigInt(root).toString(16)}`);
+  console.log(`   Tree depth: ${treeDepth}`);
+
+  return { poseidon, leaves: paddedLeaves, root, treeDepth, hash2, zero };
 }
 
 /**
  * Generate Merkle proof for a specific contributor
  */
-function generateMerkleProof(tree, leaves, contributorAddress, poseidon) {
+function generateMerkleProof(_ignored, leaves, contributorAddress, poseidon, treeDepth = 20) {
   console.log('\n🔍 Generating Merkle proof...');
   
   const addrBigInt = BigInt(contributorAddress);
@@ -86,11 +103,16 @@ function generateMerkleProof(tree, leaves, contributorAddress, poseidon) {
     throw new Error(`❌ Contributor ${contributorAddress} not found in tree!`);
   }
   
-  const proof = tree.getProof(leafIndex);
-  
-  // Convert proof to format expected by circuit
-  const pathElements = proof.map(p => p.data.toString());
-  const pathIndices = proof.map(p => p.position === 'right' ? 1 : 0);
+  if (leafIndex !== 0) {
+    throw new Error(
+      `❌ Demo prover currently supports only leafIndex=0, got ${leafIndex}. ` +
+      `Register order or tree construction needs extending for multi-leaf proofs.`
+    );
+  }
+
+  // Siblings are all zeros; indices all 0 (leaf always on the left)
+  const pathElements = Array(treeDepth).fill('0');
+  const pathIndices = Array(treeDepth).fill(0);
   
   console.log(`   Leaf index: ${leafIndex}`);
   console.log(`   Proof length: ${pathElements.length}`);
@@ -167,6 +189,14 @@ function padArray(arr, length, fillValue = '0') {
   return padded;
 }
 
+function padArrayNumbers(arr, length, fillValue = 0) {
+  const padded = [...arr];
+  while (padded.length < length) {
+    padded.push(fillValue);
+  }
+  return padded;
+}
+
 /**
  * Main execution
  */
@@ -175,13 +205,19 @@ async function main() {
   console.log('🔐 zkSNARK PROOF GENERATION');
   console.log('═══════════════════════════════════════════════════════');
   
-  // Parse arguments
-  const contributorAddress = process.argv[2];
-  const nonce = process.argv[3] || Math.floor(Math.random() * 1000000);
+  // Parse arguments.
+  // When run via Hardhat, positional args must come after `--`, e.g.:
+  //   npx hardhat run ... -- <address> <nonce>
+  const rawArgs = process.argv.slice(2);
+  const ddIndex = rawArgs.indexOf('--');
+  const args = ddIndex >= 0 ? rawArgs.slice(ddIndex + 1) : rawArgs;
+
+  const contributorAddress = process.env.ZKP_CONTRIBUTOR || args[0];
+  const nonce = process.env.ZKP_NONCE || args[1] || Math.floor(Math.random() * 1000000);
   
   if (!contributorAddress) {
     console.error('\n❌ Error: Contributor address required');
-    console.log('\nUsage: node generate-zk-proof.js <address> [nonce]');
+    console.log('\nUsage: npx hardhat run scripts/zkp/generate-zk-proof.js --network arbitrumSepolia -- <address> [nonce]');
     console.log('Example: node generate-zk-proof.js 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb 12345');
     process.exit(1);
   }
@@ -219,21 +255,32 @@ async function main() {
   const registryAddress = addresses.PrivacyPreservingRegistry;
   
   console.log(`\n🌐 Registry: ${registryAddress}`);
+
+  // Fail-fast if we're accidentally connected to the local Hardhat network.
+  const net = await ethers.provider.getNetwork();
+  const expectedChainId = BigInt(addresses.chainId || 421614);
+  if (net.chainId !== expectedChainId) {
+    console.error(`\n❌ Connected to wrong chainId ${net.chainId.toString()} (expected ${expectedChainId.toString()}).`);
+    console.error('   This usually means the RPC is not being used and Hardhat fell back to its in-memory network.');
+    process.exit(1);
+  }
   
   try {
     // Step 1: Load contributors
     const contributors = await loadContributors(registryAddress);
     
     // Step 2: Build Merkle tree
-    const { tree, leaves, poseidon } = await buildMerkleTree(contributors);
-    const merkleRoot = tree.getRoot().toString('hex');
+  const TREE_DEPTH = 20; // Must match the circuit (ContributorProof(20))
+  const { leaves, poseidon, root } = await buildMerkleTree(contributors, TREE_DEPTH);
+  const merkleRoot = BigInt(root).toString(16);
     
     // Step 3: Generate Merkle proof
     const { pathElements, pathIndices } = generateMerkleProof(
-      tree,
+      null,
       leaves,
       contributorAddress,
-      poseidon
+      poseidon,
+      TREE_DEPTH
     );
     
     // Step 4: Generate commitment
@@ -241,21 +288,21 @@ async function main() {
     console.log(`\n🔒 Commitment: ${commitment}`);
     
     // Step 5: Prepare circuit input
-    const TREE_DEPTH = 20; // From circuit definition
-    
     const circuitInput = {
+      commitment: BigInt(commitment).toString(),
       address: BigInt(contributorAddress).toString(),
       nonce: nonce.toString(),
       merkleRoot: BigInt('0x' + merkleRoot).toString(),
-      pathElements: padArray(pathElements, TREE_DEPTH, '0'),
-      pathIndices: padArray(pathIndices, TREE_DEPTH, 0)
+      // Field names must match circuits/contributor-proof.circom:
+      merkleProof: padArray(pathElements, TREE_DEPTH, '0'),
+      merklePathIndices: padArrayNumbers(pathIndices, TREE_DEPTH, 0)
     };
     
     console.log('\n📊 Circuit Input Summary:');
     console.log(`   Address: ${circuitInput.address}`);
     console.log(`   Nonce: ${circuitInput.nonce}`);
     console.log(`   Merkle root: ${circuitInput.merkleRoot}`);
-    console.log(`   Path elements: ${pathElements.length} (padded to ${TREE_DEPTH})`);
+  console.log(`   Merkle proof elements: ${pathElements.length} (padded to ${TREE_DEPTH})`);
     
     // Step 6: Generate zkSNARK proof
     const startTime = Date.now();

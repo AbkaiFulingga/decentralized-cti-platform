@@ -30,10 +30,20 @@ export default function IOCSubmissionForm() {
   const [zkpLoading, setZkpLoading] = useState(false);
   const [anonymitySetSize, setAnonymitySetSize] = useState(0);
   const [treeAge, setTreeAge] = useState(null);
+  const [treeRebuildStatus, setTreeRebuildStatus] = useState(null);
+  const [treeRebuilding, setTreeRebuilding] = useState(false);
   const [isInTree, setIsInTree] = useState(false);
   const [zksnarkReady, setZksnarkReady] = useState(false);
   const [proofGenerating, setProofGenerating] = useState(false);
   const [proofProgress, setProofProgress] = useState('');
+
+  // Privacy score: probability of guessing the submitter if all contributors are equally likely.
+  // For anonymity set size x, guess probability is 1/x (e.g. x=3 -> 33.33%).
+  const privacyPercent = (() => {
+    const x = Number(anonymitySetSize);
+    if (!Number.isFinite(x) || x <= 0) return null;
+    return 100 / x;
+  })();
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.ethereum) {
@@ -174,7 +184,7 @@ export default function IOCSubmissionForm() {
       
       // Also load for zkSNARK prover
       const zksnarkLoaded = await zksnarkProver.loadContributorTree();
-      if (zksnarkLoaded) {
+      if (zksnarkLoaded?.loaded || zksnarkLoaded === true) {
         setZksnarkReady(true);
         // ✅ FIX: Check using zkSNARK prover, not old Merkle prover
         if (walletAddress) {
@@ -186,6 +196,38 @@ export default function IOCSubmissionForm() {
       }
     } finally {
       setZkpLoading(false);
+    }
+  };
+
+  const rebuildContributorTree = async () => {
+    setTreeRebuilding(true);
+    setTreeRebuildStatus('⏳ Rebuilding contributor tree…');
+    try {
+      const res = await fetch('/api/contributor-tree/rebuild', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || `Rebuild failed (HTTP ${res.status})`);
+      }
+
+      const root = json?.tree?.root;
+      const lastUpdate = json?.tree?.lastUpdate;
+      const ageHours = json?.tree?.freshness?.ageHours;
+
+      setTreeRebuildStatus(
+        `✅ Tree rebuilt${root ? ` (root ${String(root).slice(0, 10)}…)` : ''}. ` +
+          (lastUpdate ? `Updated: ${lastUpdate}` : '') +
+          (ageHours !== undefined ? ` (${ageHours}h ago)` : '')
+      );
+
+      // Reload tree into both provers and refresh in-tree check.
+      await loadZKPTree();
+    } catch (e) {
+      setTreeRebuildStatus(`❌ ${e?.message || String(e)}`);
+    } finally {
+      setTreeRebuilding(false);
     }
   };
 
@@ -478,7 +520,7 @@ export default function IOCSubmissionForm() {
           const registryWithZK = new ethers.Contract(
             currentNetwork.contracts.registry,
             [
-              "function addBatchWithZKProof((uint256[2] a, uint256[2][2] b, uint256[2] c) proof, bytes32 commitment, bytes32 merkleRoot, string ipfsCID) external payable"
+              "function addBatchWithZKProof(string cid, bytes32 merkleRoot, uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256[2] pubSignals) external payable"
             ],
             signer
           );
@@ -497,25 +539,137 @@ export default function IOCSubmissionForm() {
           console.log('Proof pB:', proof.pB);
           console.log('Proof pC:', proof.pC);
           console.log('Public Signals:', proof.pubSignals);
+
+          // IMPORTANT: pubSignals must match the proof's publicSignals exactly.
+          // Do NOT override the merkleRoot after proving, or Groth16 verification will fail.
+          // If you see a mismatch between `contributorRoot` and `proof.pubSignals[1]`,
+          // the fix is to regenerate the proof against the current contributor tree.
+          const pubSignalsForTx = proof.pubSignals;
+
+          // Preflight: ensure calldata is actually being encoded and surface revert reasons early.
+          try {
+            const calldata = registryWithZK.interface.encodeFunctionData('addBatchWithZKProof', [
+              cid,
+              merkleRootHash,
+              proof.pA,
+              proof.pB,
+              proof.pC,
+              pubSignalsForTx
+            ]);
+            console.log('[ZK_TX_PREFLIGHT] calldata length:', calldata?.length);
+            console.log('[ZK_TX_PREFLIGHT] calldata head:', calldata?.slice(0, 18));
+          } catch (e) {
+            console.warn('[ZK_TX_PREFLIGHT] Failed to encode calldata:', e);
+          }
           
           // Calculate submission fee (1% of estimated gas cost)
-          const feeData = await provider.getFeeData();
-          const txGasPrice = feeData.maxFeePerGas || feeData.gasPrice || ethers.parseUnits("0.1", "gwei");
+          // Some RPC endpoints (and some MetaMask-connected providers) don't support
+          // eth_maxPriorityFeePerGas, which ethers may call inside getFeeData().
+          // Fallback to legacy gasPrice-only fees in that case.
+          let feeData;
+          try {
+            feeData = await provider.getFeeData();
+          } catch (e) {
+            console.warn('[FEE_DATA] provider.getFeeData() failed; falling back to gasPrice only:', e);
+            feeData = {};
+          }
+
+          let feeOverrides = {};
+          let txGasPrice;
+          try {
+            if (feeData?.maxFeePerGas != null && feeData?.maxPriorityFeePerGas != null) {
+              // EIP-1559 path
+              txGasPrice = feeData.maxFeePerGas;
+              feeOverrides = {
+                maxFeePerGas: feeData.maxFeePerGas,
+                maxPriorityFeePerGas: feeData.maxPriorityFeePerGas
+              };
+            } else {
+              // Legacy path
+              const gp = feeData?.gasPrice ?? (await provider.getGasPrice?.());
+              txGasPrice = gp ?? ethers.parseUnits('0.1', 'gwei');
+              feeOverrides = { gasPrice: txGasPrice };
+            }
+          } catch (e) {
+            // Absolute last-resort: fixed low gas price so fee calc doesn't crash.
+            console.warn('[FEE_DATA] Falling back to hardcoded gas price:', e);
+            txGasPrice = ethers.parseUnits('0.1', 'gwei');
+            feeOverrides = { gasPrice: txGasPrice };
+          }
+
           const estimatedGas = 500000n;
           const gasCost = estimatedGas * txGasPrice;
           const submissionFee = (gasCost * 1n) / 100n;
           const submissionFeeWithMargin = (submissionFee * 2n); // 2x margin for safety
           
           console.log('Submission fee:', ethers.formatEther(submissionFeeWithMargin), 'ETH');
+
+          // Static call to get revert reason (won't spend gas)
+          // Note: ethers v6 uses `.staticCall`.
+          try {
+            await registryWithZK.addBatchWithZKProof.staticCall(
+              cid,
+              merkleRootHash,
+              proof.pA,
+              proof.pB,
+              proof.pC,
+              pubSignalsForTx,
+              {
+                value: submissionFeeWithMargin,
+                ...feeOverrides
+              }
+            );
+            console.log('[ZK_TX_PREFLIGHT] staticCall OK');
+          } catch (e) {
+            console.error('[ZK_TX_PREFLIGHT] staticCall REVERT:', e);
+
+            // Extra diagnostics for providers that return "require(false)" with no revert data.
+            try {
+              const to = currentNetwork?.contracts?.registry;
+              const net = await provider.getNetwork();
+              const from = await signer.getAddress();
+              const calldata = registryWithZK.interface.encodeFunctionData('addBatchWithZKProof', [
+                cid,
+                merkleRootHash,
+                proof.pA,
+                proof.pB,
+                proof.pC,
+                pubSignalsForTx
+              ]);
+
+              console.warn('[ZK_TX_PREFLIGHT] diag: chainId=', net?.chainId?.toString?.(), 'to=', to, 'from=', from);
+              console.warn('[ZK_TX_PREFLIGHT] diag: selector=', calldata?.slice(0, 10), 'dataLen=', calldata?.length);
+
+              // provider.call sometimes yields more detailed errors than Contract.staticCall.
+              await provider.call({
+                to,
+                from,
+                data: calldata,
+                value: submissionFeeWithMargin,
+                ...feeOverrides
+              });
+              console.warn('[ZK_TX_PREFLIGHT] diag: provider.call unexpectedly succeeded');
+            } catch (diagErr) {
+              console.warn('[ZK_TX_PREFLIGHT] diag: provider.call error:', diagErr);
+            }
+
+            throw e;
+          }
           
+          // NOTE: This registry ABI expects the older signature:
+          // addBatchWithZKProof(string cid, bytes32 iocMerkleRoot, uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256[2] pubSignals)
+          // where pubSignals = [commitment, contributorMerkleRoot]
           const tx = await registryWithZK.addBatchWithZKProof(
-            { a: proof.pA, b: proof.pB, c: proof.pC },
-            proof.commitment,
-            contributorRoot,
             cid,
+            merkleRootHash,
+            proof.pA,
+            proof.pB,
+            proof.pC,
+            pubSignalsForTx,
             {
               value: submissionFeeWithMargin,
-              gasLimit: 500000
+              gasLimit: 500000,
+              ...feeOverrides
             }
           );
           
@@ -875,10 +1029,46 @@ Gas used: ${receipt.gasUsed.toString()}`);
                             {treeAge.isStale && <span className="text-yellow-400"> ⚠️ Stale</span>}
                           </p>
                         )}
+
+                        {(treeAge?.isStale || treeRebuildStatus) && (
+                          <div className="mt-3 flex flex-col gap-2">
+                            {treeRebuildStatus && (
+                              <p className="text-xs text-gray-400">{treeRebuildStatus}</p>
+                            )}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={rebuildContributorTree}
+                                disabled={treeRebuilding}
+                                className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                                  treeRebuilding
+                                    ? 'bg-gray-800/60 text-gray-500 border-gray-700 cursor-not-allowed'
+                                    : 'bg-purple-500/20 text-purple-200 border-purple-500/40 hover:bg-purple-500/30'
+                                }`}
+                              >
+                                {treeRebuilding ? 'Rebuilding…' : 'Rebuild tree'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={loadZKPTree}
+                                disabled={zkpLoading || treeRebuilding}
+                                className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                                  zkpLoading || treeRebuilding
+                                    ? 'bg-gray-800/60 text-gray-500 border-gray-700 cursor-not-allowed'
+                                    : 'bg-gray-800/60 text-gray-200 border-gray-700 hover:bg-gray-700/60'
+                                }`}
+                              >
+                                Refresh
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500 mb-1">Privacy</div>
-                        <div className="text-green-400 font-bold text-lg">95%</div>
+                        <div className="text-green-400 font-bold text-lg">
+                          {privacyPercent === null ? '—' : `${privacyPercent.toFixed(2)}%`}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -894,6 +1084,40 @@ Gas used: ${receipt.gasUsed.toString()}`);
                         <p className="text-gray-500 text-xs mt-1">
                           You can submit in public mode now, or wait up to 24 hours.
                         </p>
+
+                        {(treeRebuildStatus || treeAge?.isStale) && (
+                          <div className="mt-3 flex flex-col gap-2">
+                            {treeRebuildStatus && (
+                              <p className="text-xs text-gray-400">{treeRebuildStatus}</p>
+                            )}
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={rebuildContributorTree}
+                                disabled={treeRebuilding}
+                                className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                                  treeRebuilding
+                                    ? 'bg-gray-800/60 text-gray-500 border-gray-700 cursor-not-allowed'
+                                    : 'bg-purple-500/20 text-purple-200 border-purple-500/40 hover:bg-purple-500/30'
+                                }`}
+                              >
+                                {treeRebuilding ? 'Rebuilding…' : 'Rebuild tree'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={loadZKPTree}
+                                disabled={zkpLoading || treeRebuilding}
+                                className={`px-3 py-1.5 rounded-lg text-xs border transition ${
+                                  zkpLoading || treeRebuilding
+                                    ? 'bg-gray-800/60 text-gray-500 border-gray-700 cursor-not-allowed'
+                                    : 'bg-gray-800/60 text-gray-200 border-gray-700 hover:bg-gray-700/60'
+                                }`}
+                              >
+                                Refresh
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

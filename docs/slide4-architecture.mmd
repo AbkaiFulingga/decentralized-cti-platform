@@ -1,0 +1,32 @@
+%% Slide 4: System Architecture Overview (Mermaid)
+%% Copy/paste this into Mermaid Live Editor or render it in Markdown.
+
+flowchart LR
+  %% Actors
+  U[Contributor / Analyst\n(Frontend User)]
+
+  %% Frontend
+  FE[Frontend\nNext.js + ethers v6\nMetaMask]
+
+  %% Off-chain storage
+  IPFS[(IPFS / Pinata\nIOC Batch JSON)]
+
+  %% On-chain
+  subgraph L2[Arbitrum Sepolia (L2)\nSmart Contracts]
+    REG[PrivacyPreservingRegistry\n- Stores batch metadata\n- Stores iocMerkleRoot\n- Stores cidCommitment]
+    GOV[ThresholdGovernance\n- Admin approvals\n- Batch acceptance]
+    ZKV[ZKVerifier\n- root allowlist\n- replay protection]
+    G16[Groth16Verifier\n(auto-generated)]
+
+    REG -->|verifyAndRegisterProof| ZKV
+    ZKV -->|verifyProof| G16
+    GOV -->|acceptBatch / governance actions| REG
+  end
+
+  %% Main flows
+  U --> FE
+  FE -->|1) Upload IOC JSON| IPFS
+  FE -->|2) Submit CID + iocMerkleRoot\n+ Groth16 proof + publicSignals| REG
+
+  %% Notes
+  FE -.->|Computes iocMerkleRoot (keccak256 Merkle)\nBuilds proof inputs| FE

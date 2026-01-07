@@ -8,6 +8,7 @@ import { getEventQueryDefaults, smartQueryEvents } from '../utils/infura-helpers
 
 export default function TransactionHistory() {
   const [transactions, setTransactions] = useState([]);
+  const [networkFilter, setNetworkFilter] = useState('all'); // 'all' | 'Sepolia' | 'Arbitrum Sepolia'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isRegistered, setIsRegistered] = useState(false);
@@ -100,6 +101,7 @@ export default function TransactionHistory() {
       ];
 
       let allUserTransactions = [];
+      let registeredOnAnyNetwork = false;
 
       for (const { name, config } of networksToQuery) {
         try {
@@ -123,6 +125,8 @@ export default function TransactionHistory() {
             console.log(`ℹ️ Not registered on ${name}, skipping`);
             continue;
           }
+
+          registeredOnAnyNetwork = true;
 
           const batchCount = await registry.getBatchCount();
           console.log(`📦 ${name}: ${batchCount} total batches`);
@@ -198,6 +202,7 @@ export default function TransactionHistory() {
                 allUserTransactions.push({
                   network: name,
                   networkShort: name === 'Sepolia' ? 'ETH' : 'ARB',
+                  networkConfig: config,
                   batchIndex: i,
                   cid: cid || 'CID not found',
                   cidCommitment: batch.cidCommitment,
@@ -220,9 +225,9 @@ export default function TransactionHistory() {
         }
       }
 
-      // Check if registered on at least one network
-      const registeredOnAny = allUserTransactions.length > 0;
-      setIsRegistered(registeredOnAny);
+  // Registered status should reflect contributor registration, not whether
+  // we happened to find any matching public batches in the current scan.
+  setIsRegistered(registeredOnAnyNetwork);
 
       // Sort by timestamp (most recent first)
       allUserTransactions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -281,6 +286,15 @@ export default function TransactionHistory() {
     );
   }
 
+  const filteredTransactions = transactions.filter((tx) => {
+    if (networkFilter === 'all') return true;
+    return tx.network === networkFilter;
+  });
+
+  const totalCount = transactions.length;
+  const l1Count = transactions.filter((t) => t.network === 'Sepolia').length;
+  const l2Count = transactions.filter((t) => t.network === 'Arbitrum Sepolia').length;
+
   return (
     <div className="max-w-6xl mx-auto mt-12">
       <div className="bg-gray-800/50 backdrop-blur-xl rounded-2xl p-8 border border-gray-700/50">
@@ -295,9 +309,75 @@ export default function TransactionHistory() {
             </p>
           </div>
           <div className="text-right">
-            <div className="text-sm text-gray-400">Network</div>
-            <div className="text-purple-300 font-semibold">{currentNetwork?.name || 'Unknown'}</div>
+            <div className="text-sm text-gray-400">View</div>
+
+            {/* Clickable selector that controls the history filter */}
+            <div className="mt-1 inline-flex items-center gap-2">
+              <select
+                value={networkFilter}
+                onChange={(e) => setNetworkFilter(e.target.value)}
+                className="bg-gray-900/40 border border-gray-700/60 text-gray-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-purple-500/40"
+                aria-label="Select network filter"
+              >
+                <option value="all">All networks</option>
+                <option value="Sepolia">Sepolia (L1)</option>
+                <option value="Arbitrum Sepolia">Arbitrum Sepolia (L2)</option>
+              </select>
+
+              {/* Keep connected chain visible, but separate from the filter */}
+              <span
+                className="hidden sm:inline-flex items-center px-3 py-2 rounded-lg bg-purple-950/40 border border-purple-700/40 text-purple-200 text-xs"
+                title="Connected network (MetaMask)"
+              >
+                Connected: {currentNetwork?.name || 'Unknown'}
+              </span>
+            </div>
           </div>
+        </div>
+
+        {/* Network filter toggle */}
+        <div className="mb-6">
+          <div className="inline-flex rounded-xl border border-gray-700/60 bg-gray-900/30 p-1 gap-1">
+            <button
+              type="button"
+              onClick={() => setNetworkFilter('all')}
+              className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                networkFilter === 'all'
+                  ? 'bg-purple-600/30 text-purple-200 border border-purple-500/30'
+                  : 'text-gray-300 hover:text-white hover:bg-gray-800/40'
+              }`}
+              title="Show all networks"
+            >
+              All <span className="text-gray-400">({totalCount})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setNetworkFilter('Sepolia')}
+              className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                networkFilter === 'Sepolia'
+                  ? 'bg-blue-600/20 text-blue-200 border border-blue-500/30'
+                  : 'text-gray-300 hover:text-white hover:bg-gray-800/40'
+              }`}
+              title="Show Sepolia (L1)"
+            >
+              Sepolia <span className="text-gray-400">({l1Count})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setNetworkFilter('Arbitrum Sepolia')}
+              className={`px-3 py-2 rounded-lg text-sm transition-all ${
+                networkFilter === 'Arbitrum Sepolia'
+                  ? 'bg-orange-600/20 text-orange-200 border border-orange-500/30'
+                  : 'text-gray-300 hover:text-white hover:bg-gray-800/40'
+              }`}
+              title="Show Arbitrum Sepolia (L2)"
+            >
+              Arbitrum Sepolia <span className="text-gray-400">({l2Count})</span>
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            Tip: Use the buttons to switch between L1 and L2 history.
+          </p>
         </div>
 
         {!isRegistered ? (
@@ -311,23 +391,26 @@ export default function TransactionHistory() {
               💡 Register with 0.01 ETH (MICRO), 0.05 ETH (STANDARD), or 0.1 ETH (PREMIUM)
             </p>
           </div>
-        ) : transactions.length === 0 ? (
+        ) : filteredTransactions.length === 0 ? (
           <div className="text-center py-12">
             <div className="text-6xl mb-4">📭</div>
             <p className="text-gray-400 text-lg mb-2">No Submissions Yet</p>
             <p className="text-gray-500 text-sm">
-              You haven't submitted any IOC batches yet
+              {networkFilter === 'all'
+                ? "You haven't submitted any IOC batches yet"
+                : `No ${networkFilter} submissions found for this wallet`}
             </p>
           </div>
         ) : (
           <div className="space-y-4">
             <div className="mb-4 p-3 bg-purple-950/50 rounded-lg border border-purple-700/50">
               <p className="text-gray-300 text-sm">
-                📊 {transactions.length} batch{transactions.length !== 1 ? 'es' : ''} submitted
+                📊 {filteredTransactions.length} batch{filteredTransactions.length !== 1 ? 'es' : ''} shown
+                <span className="text-gray-500"> (of {transactions.length} total)</span>
               </p>
             </div>
 
-            {transactions.map((tx) => (
+            {filteredTransactions.map((tx) => (
               <div
                 key={`${tx.network}-${tx.batchIndex}`}
                 className="bg-purple-950/50 rounded-xl p-6 border border-purple-700/50 hover:border-purple-600/70 transition-all"
@@ -394,16 +477,21 @@ export default function TransactionHistory() {
 
                 <div className="flex gap-3">
                   <a
-                    href={`https://gateway.pinata.cloud/ipfs/${tx.cid}`}
+                    href={tx.cid && tx.cid !== 'CID not found' ? `https://gateway.pinata.cloud/ipfs/${tx.cid}` : undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex-1 text-center py-2 px-4 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-lg text-blue-300 text-sm transition-all"
+                    className={`flex-1 text-center py-2 px-4 border rounded-lg text-sm transition-all ${
+                      tx.cid && tx.cid !== 'CID not found'
+                        ? 'bg-blue-600/20 hover:bg-blue-600/30 border-blue-500/30 text-blue-300'
+                        : 'bg-gray-800/30 border-gray-700/50 text-gray-500 cursor-not-allowed'
+                    }`}
+                    aria-disabled={!(tx.cid && tx.cid !== 'CID not found')}
                   >
                     📁 View on IPFS
                   </a>
                   
                   <a
-                    href={`${currentNetwork?.explorerUrl}/address/${currentNetwork?.contracts.registry}`}
+                    href={`${tx.networkConfig?.explorerUrl}/address/${tx.networkConfig?.contracts.registry}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex-1 text-center py-2 px-4 bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 rounded-lg text-purple-300 text-sm transition-all"

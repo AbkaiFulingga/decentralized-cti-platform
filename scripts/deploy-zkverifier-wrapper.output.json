@@ -1,0 +1,7 @@
+{
+  "network": "arbitrumSepolia",
+  "deployedAt": "2026-01-06T18:18:22.451Z",
+  "zkVerifier": "0xa9f975d07a74398a95cf1B8885F35e257C6ED3F5",
+  "groth16Verifier": "0xa98A34E321b5f00E29E62FaD03B25AC0B10C418b",
+  "merkleRoot": "0x1e1785ccddaa68c0e25b32d994b4f50dad1aaeda1a64f6a12c569b3c8a4a15ce"
+}

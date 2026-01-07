@@ -7,14 +7,19 @@ export async function POST(request) {
     console.log('📤 Pinata upload request');
     console.log('IOCs:', data.iocs?.length);
     
-    const PINATA_JWT = process.env.PINATA_JWT;
+    // Server-side only. Prefer PINATA_JWT, but allow a fallback if someone
+    // mistakenly stored it as NEXT_PUBLIC_* during local testing.
+    const PINATA_JWT = process.env.PINATA_JWT || process.env.NEXT_PUBLIC_PINATA_JWT;
     
     if (!PINATA_JWT) {
       console.error('❌ PINATA_JWT not set');
-      return NextResponse.json({
-        success: false,
-        error: 'PINATA_JWT not configured'
-      }, { status: 500 });
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'PINATA_JWT not configured (set PINATA_JWT in cti-frontend/.env.local and restart the dev server)'
+        },
+        { status: 500 }
+      );
     }
     
     const formData = new FormData();

@@ -180,7 +180,9 @@ export default function OracleFeedDisplay() {
       
       const registryABI = [
         "function getBatchCount() public view returns (uint256)",
-        "function getBatch(uint256 index) public view returns (string memory cid, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
+        // Modern registry returns CID commitment + plaintext ipfsCID
+        // (anonymous batches won't have a usable ipfsCID)
+        "function getBatch(uint256 index) public view returns (bytes32 cidCommitment, string ipfsCID, bytes32 merkleRoot, uint256 timestamp, bool accepted, bytes32 contributorHash, bool isPublic, uint256 confirmations, uint256 falsePositives)"
       ];
       
       const registry = new ethers.Contract(
@@ -204,8 +206,17 @@ export default function OracleFeedDisplay() {
         try {
           const batch = await registry.getBatch(i);
           
-          if (oracleHashes.includes(batch[4])) {
-            const response = await fetch(`/api/ipfs-fetch?cid=${batch[0]}`);
+          // contributorHash is a bytes32 hex string in ethers v6
+          if (oracleHashes.includes(batch[5])) {
+            const ipfsCID = batch[1];
+
+            // Oracle submissions should be public and include an ipfsCID.
+            // If it's missing, skip showing it in the “Recent Oracle Updates” list.
+            if (!ipfsCID || ipfsCID === '0x00') {
+              continue;
+            }
+
+            const response = await fetch(`/api/ipfs-fetch?cid=${encodeURIComponent(ipfsCID)}`);
             const result = await response.json();
             
             let feedName = 'Unknown';
@@ -217,11 +228,11 @@ export default function OracleFeedDisplay() {
               batchId: i,
               feedName: feedName,
               icon: FEED_INFO[feedName]?.icon || '📊',
-              timestamp: Number(batch[2]),
-              timestampFormatted: new Date(Number(batch[2]) * 1000).toLocaleString(),
-              approved: batch[3],
+              timestamp: Number(batch[3]),
+              timestampFormatted: new Date(Number(batch[3]) * 1000).toLocaleString(),
+              approved: batch[4],
               iocCount: result.success ? result.data.iocs.length : 0,
-              cid: batch[0]
+              cid: ipfsCID
             });
           }
         } catch (error) {

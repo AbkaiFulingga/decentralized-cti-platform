@@ -1,5 +1,5 @@
 // app/statistics/page.js
-import AnalyticsDashboard from '../../components/AnalyticsDashboard';
+import AnalyticsDashboard from '../../components/AnalyticsDashboard-cached';
 
 export default function StatisticsPage() {
   return (

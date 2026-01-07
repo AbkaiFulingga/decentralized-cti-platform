@@ -14,7 +14,11 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const axios = require('axios');
 const { MerkleTree } = require('merkletreejs');
-const { keccak256 } = require('ethers');
+
+// When executed via `node`, Hardhat globals like `ethers` and `network` are not defined.
+// We load the Hardhat Runtime Environment (HRE) so this script can be run either way.
+const hre = require('hardhat');
+const { ethers, network } = hre;
 
 const execAsync = promisify(exec);
 
@@ -22,33 +26,57 @@ async function generateProof(contributorAddress, contributorTreeData) {
     console.log("🔐 Generating zkSNARK proof...");
     const startTime = Date.now();
 
+    // Circuit expects Poseidon-based proof inputs:
+    //   private: address, nonce, merkleProof[20], merklePathIndices[20]
+    //   public:  commitment, merkleRoot
+    // Random-ish nonce is fine for a demo script; must be < field.
+    const nonce = BigInt(Date.now());
+
+    // Compute Poseidon(address, nonce) commitment exactly as the circuit does.
+    // We use circomlibjs here to avoid keccak-based helpers that don't match the circuit.
+    const { buildPoseidon } = require('circomlibjs');
+    const poseidon = await buildPoseidon();
+    const F = poseidon.F;
+    const addrBig = BigInt(contributorAddress);
+    const commitment = F.toObject(poseidon([addrBig, nonce]));
+
     // Create input.json for circuit
+    const merkleProofRaw =
+        contributorTreeData.proof ??
+        contributorTreeData.merkleProof ??
+        contributorTreeData.siblings;
+    const merklePathRaw =
+        contributorTreeData.pathIndices ??
+        contributorTreeData.merklePathIndices ??
+        contributorTreeData.path;
+
+    const rootHex = contributorTreeData.root || contributorTreeData.merkleRoot;
+    if (!rootHex) {
+        throw new Error('Missing contributor Merkle root (expected contributorTreeData.root)');
+    }
+
     const input = {
+        // public
+        commitment: commitment.toString(),
+        merkleRoot: BigInt(rootHex).toString(),
+
+        // private
         address: BigInt(contributorAddress).toString(),
-        pathIndices: contributorTreeData.pathIndices,
-        siblings: contributorTreeData.siblings
+        nonce: nonce.toString(),
+        merkleProof: (merkleProofRaw || []).map((x) => BigInt(x).toString()),
+        merklePathIndices: merklePathRaw
     };
 
-    // Write input file
-    const inputPath = path.join(__dirname, '../circuits/input.json');
-    fs.writeFileSync(inputPath, JSON.stringify(input, null, 2));
-    console.log("   ✅ Input file created");
+    // Use the same artifacts/schema as the frontend prover (known-good).
+    console.log("   ⏳ Computing zkSNARK proof via snarkjs.groth16.fullProve...");
+    const snarkjs = require('snarkjs');
+    const wasmPath = path.join(__dirname, '../cti-frontend/public/circuits/contributor-proof.wasm');
+    const zkeyPath = path.join(__dirname, '../cti-frontend/public/circuits/contributor-proof_final.zkey');
+    if (!fs.existsSync(wasmPath)) throw new Error(`Missing WASM: ${wasmPath}`);
+    if (!fs.existsSync(zkeyPath)) throw new Error(`Missing zkey: ${zkeyPath}`);
 
-    // Generate witness
-    console.log("   ⏳ Generating witness...");
-    const witnessCmd = `cd circuits && node contributor-proof_js/generate_witness.js contributor-proof_js/contributor-proof.wasm input.json witness.wtns`;
-    await execAsync(witnessCmd);
-    console.log("   ✅ Witness generated");
-
-    // Generate proof
-    console.log("   ⏳ Computing zkSNARK proof (this takes 10-30 seconds)...");
-    const proofCmd = `cd circuits && snarkjs groth16 prove contributor-proof_final.zkey witness.wtns proof.json public.json`;
-    await execAsync(proofCmd);
+    const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
     console.log("   ✅ Proof generated");
-
-    // Read proof and public signals
-    const proof = JSON.parse(fs.readFileSync(path.join(__dirname, '../circuits/proof.json')));
-    const publicSignals = JSON.parse(fs.readFileSync(path.join(__dirname, '../circuits/public.json')));
 
     const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`   ⏱️  Proof generation time: ${elapsedTime}s\n`);
@@ -66,6 +94,11 @@ function formatProofForSolidity(proof) {
         ],
         pC: [proof.pi_c[0], proof.pi_c[1]]
     };
+}
+
+function uintToBytes32(u) {
+    const hex = BigInt(u).toString(16).padStart(64, '0');
+    return `0x${hex}`;
 }
 
 async function uploadToIPFS(iocs) {
@@ -100,8 +133,8 @@ async function uploadToIPFS(iocs) {
 
 function buildMerkleTree(iocs) {
     console.log("🌲 Building Merkle tree from IOCs...");
-    const leaves = iocs.map(ioc => keccak256(ethers.toUtf8Bytes(ioc)));
-    const tree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+    const leaves = iocs.map((ioc) => ethers.keccak256(ethers.toUtf8Bytes(ioc)));
+    const tree = new MerkleTree(leaves, ethers.keccak256, { sortPairs: true });
     const root = tree.getHexRoot();
     console.log(`   ✅ Merkle root: ${root}\n`);
     return { tree, root };
@@ -112,24 +145,37 @@ async function main() {
     console.log("🧪 zkSNARK Anonymous IOC Submission Test");
     console.log("=" .repeat(60) + "\n");
 
-    // Load deployment addresses
-    const addresses = JSON.parse(fs.readFileSync('deployment-complete-zk.json', 'utf8'));
-    const registryAddress = addresses.contracts.privacyPreservingRegistry;
+    // This script is meant to hit the *live* Arbitrum Sepolia deployment.
+    // When executed via `node`, HRE's default network is `hardhat`, so we explicitly
+    // create a provider+signer from env vars.
+    const rpcUrl = process.env.ARBITRUM_RPC || process.env.ARBITRUM_RPC_URL;
+    const pk = process.env.PRIVATE_KEY_ADMIN1 || process.env.ORACLE_PRIVATE_KEY || process.env.PRIVATE_KEY;
+    if (!rpcUrl) throw new Error('Missing ARBITRUM_RPC (or ARBITRUM_RPC_URL) in .env');
+    if (!pk) throw new Error('Missing PRIVATE_KEY_ADMIN1 (or ORACLE_PRIVATE_KEY / PRIVATE_KEY) in .env');
+
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const signer = new ethers.Wallet(pk, provider);
+
+    // Load deployment addresses (single source of truth for the app/scripts)
+    const addresses = JSON.parse(fs.readFileSync('test-addresses-arbitrum.json', 'utf8'));
+    const registryAddress =
+        addresses.PrivacyPreservingRegistry ||
+        addresses.privacyPreservingRegistry ||
+        addresses.registry;
+    if (!registryAddress) throw new Error('Could not find privacyPreservingRegistry in test-addresses-arbitrum.json');
     
     console.log("📋 Test Configuration:");
-    console.log(`Network: ${network.name}`);
+    console.log(`Network: arbitrumSepolia`);
     console.log(`Registry: ${registryAddress}\n`);
 
-    // Get signer
-    const [signer] = await ethers.getSigners();
     console.log(`Submitter: ${signer.address}\n`);
 
     // Load contributor Merkle tree data
     const contributorTree = JSON.parse(fs.readFileSync('contributor-merkle-tree.json', 'utf8'));
     
-    // Find contributor's path in tree
-    const contributorLeaf = contributorTree.leaves.find(
-        leaf => leaf.address.toLowerCase() === signer.address.toLowerCase()
+    // Find contributor's path/proof in tree (current schema uses `proofs[]`)
+    const contributorLeaf = (contributorTree.proofs || []).find(
+        (p) => (p.address || '').toLowerCase() === signer.address.toLowerCase()
     );
     
     if (!contributorLeaf) {
@@ -139,15 +185,15 @@ async function main() {
     }
 
     console.log("✅ Contributor found in tree");
-    console.log(`   Index: ${contributorLeaf.index}`);
+    console.log(`   Leaf index: ${contributorLeaf.leafIndex}`);
     console.log(`   Path indices: [${contributorLeaf.pathIndices}]`);
-    console.log(`   Siblings: ${contributorLeaf.siblings.length} nodes\n`);
+    console.log(`   Siblings: ${contributorLeaf.proof.length} nodes\n`);
 
     // ============ STEP 1: Generate zkSNARK Proof ============
     
     const { proof, publicSignals, generationTime } = await generateProof(
         signer.address,
-        contributorLeaf
+        { ...contributorLeaf, root: contributorTree.root }
     );
 
     console.log("📊 Proof Statistics:");
@@ -182,29 +228,62 @@ async function main() {
     
     console.log("📝 Submitting batch with zkSNARK proof...");
     
-    const Registry = await ethers.getContractFactory("PrivacyPreservingRegistry");
-    const registry = Registry.attach(registryAddress);
+    // Attach to live registry.
+    // IMPORTANT: If the Hardhat artifact ABI is stale/mismatched, it can lead to empty calldata.
+    // We'll verify the ABI contains the ZK method and fall back to the frontend ABI if needed.
+    let registry;
+    {
+        const Registry = await hre.ethers.getContractFactory("PrivacyPreservingRegistry", signer);
+        registry = Registry.attach(registryAddress);
+    }
 
-    // Format proof for Solidity
+    // Use the Hardhat artifact ABI, which matches the deployed PrivacyPreservingRegistry
+    // signature in contracts/PrivacyPreservingRegistry.sol.
+    const zkFn = "addBatchWithZKProof";
+    const hardhatAbiHasZk = typeof registry[zkFn] === 'function';
+    console.log(`   ABI check (Hardhat artifact) has ${zkFn}:`, hardhatAbiHasZk);
+    if (!hardhatAbiHasZk) {
+        throw new Error('Hardhat artifact ABI is missing addBatchWithZKProof; recompile or check artifact mismatch');
+    }
+
+    // Format proof for Solidity (arrays expected by on-chain function)
     const formattedProof = formatProofForSolidity(proof);
 
     // Calculate submission fee (1%)
-    const gasPrice = (await ethers.provider.getFeeData()).gasPrice;
+    const gasPrice = (await provider.getFeeData()).gasPrice;
     const estimatedGas = 200000n;
     const submissionFee = (estimatedGas * gasPrice) / 100n;
 
     console.log(`   Submission fee: ${ethers.formatEther(submissionFee)} ETH`);
 
+    // Build calldata explicitly and assert it's non-empty before sending
+    // On-chain signature (see contracts/PrivacyPreservingRegistry.sol):
+    // addBatchWithZKProof(string cid, bytes32 iocMerkleRoot, uint256[2] pA, uint256[2][2] pB, uint256[2] pC, uint256[2] pubSignals)
+    const pubSignals = publicSignals.map((s) => BigInt(s));
+    const args = [ipfsCid, iocMerkleRoot, formattedProof.pA, formattedProof.pB, formattedProof.pC, pubSignals];
+
+    const data = registry.interface.encodeFunctionData(zkFn, args);
+    if (!data || data === '0x') {
+        throw new Error('Encoded calldata is empty; ABI mismatch persists');
+    }
+    console.log('   Encoded calldata bytes:', (data.length - 2) / 2);
+
+    // Preflight to catch revert reasons before spending gas
+    try {
+        await registry.addBatchWithZKProof.staticCall(...args, { value: submissionFee });
+        console.log('   ✅ staticCall preflight passed');
+    } catch (e) {
+        console.log('   ❌ staticCall preflight reverted:', e.shortMessage || e.message);
+        throw e;
+    }
+
+    // Estimate gas once and pass an explicit gasLimit so the send uses the same execution path.
+    const est = await registry.addBatchWithZKProof.estimateGas(...args, { value: submissionFee });
+    const gasLimit = (est * 12n) / 10n; // +20%
+    console.log('   Estimated gas:', est.toString(), '-> using gasLimit', gasLimit.toString());
+
     // Submit with proof
-    const tx = await registry.addBatchWithZKProof(
-        ipfsCid,
-        iocMerkleRoot,
-        formattedProof.pA,
-        formattedProof.pB,
-        formattedProof.pC,
-        publicSignals.map(s => BigInt(s)),
-        { value: submissionFee }
-    );
+    const tx = await registry.addBatchWithZKProof(...args, { value: submissionFee, gasLimit });
 
     console.log(`   ⏳ Transaction submitted: ${tx.hash}`);
     const receipt = await tx.wait();

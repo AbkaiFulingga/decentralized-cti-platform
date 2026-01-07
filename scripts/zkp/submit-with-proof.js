@@ -15,6 +15,8 @@ const fs = require('fs');
 const path = require('path');
 const { ethers } = require('hardhat');
 const axios = require('axios');
+const keccak256 = require('keccak256');
+const { MerkleTree } = require('merkletreejs');
 require('dotenv').config();
 
 // Contract addresses
@@ -78,11 +80,14 @@ async function uploadToIPFS(iocs) {
 async function submitWithProof(registry, zkVerifier, ipfsHash, proofData) {
   console.log('\n🔐 Submitting batch with zkSNARK proof...');
   
-  const { commitment, merkleRoot, proof } = proofData;
+  // NOTE: proofData.merkleRoot is the *contributor tree* root (public signal #2)
+  // used by ZKVerifier to prove membership. The registry also requires an IOC
+  // batch Merkle root (bytes32) for later IOC inclusion verification.
+  const { commitment, merkleRoot: contributorMerkleRoot, proof } = proofData;
   
   console.log(`   IPFS Hash: ${ipfsHash}`);
   console.log(`   Commitment: ${commitment}`);
-  console.log(`   Merkle Root: ${merkleRoot}`);
+  console.log(`   Contributor Merkle Root (public): ${contributorMerkleRoot}`);
   
   // Check if commitment already used
   const isUsed = await zkVerifier.isCommitmentUsed(commitment);
@@ -91,16 +96,16 @@ async function submitWithProof(registry, zkVerifier, ipfsHash, proofData) {
   }
   
   // Check if Merkle root is valid
-  const isValidRoot = await zkVerifier.isMerkleRootValid(merkleRoot);
+  const isValidRoot = await zkVerifier.isMerkleRootValid(contributorMerkleRoot);
   if (!isValidRoot) {
-    console.warn('⚠️  Warning: Merkle root not recognized as valid. Tree may need updating.');
+    console.warn('⚠️  Warning: Contributor Merkle root not recognized as valid. Tree may need updating.');
   }
   
   // Verify proof locally first
   console.log('\n🔍 Verifying proof locally...');
   const isValid = await zkVerifier.verifyProofReadOnly(
     commitment,
-    merkleRoot,
+    contributorMerkleRoot,
     proof.a,
     proof.b,
     proof.c
@@ -111,18 +116,28 @@ async function submitWithProof(registry, zkVerifier, ipfsHash, proofData) {
   }
   
   console.log('✅ Proof verified locally');
+
+  // Build IOC Merkle root (keccak256, sorted pairs) to store in the registry
+  // so later inclusion proofs can be verified against the on-chain batch root.
+  // The on-chain registry uses OpenZeppelin MerkleProof (keccak256).
+  const iocLeaves = proofData.iocs.map(ioc => keccak256(ioc));
+  const iocTree = new MerkleTree(iocLeaves, keccak256, { sortPairs: true });
+  const iocMerkleRoot = iocTree.getHexRoot();
+  console.log(`\n🌳 IOC Merkle Root (stored on-chain): ${iocMerkleRoot}`);
   
   // Submit transaction
   console.log('\n📝 Submitting transaction...');
   console.log('   (This may take 10-30 seconds on L2...)');
   
+  const pubSignals = [commitment, contributorMerkleRoot];
   const tx = await registry.addBatchWithZKProof(
     ipfsHash,
-    commitment,
-    merkleRoot,
+    iocMerkleRoot,
     proof.a,
     proof.b,
-    proof.c
+    proof.c,
+    pubSignals,
+    { value: ethers.parseEther('0.001') } // generous buffer for the dynamic 1% fee check
   );
   
   console.log(`   Transaction hash: ${tx.hash}`);
@@ -143,19 +158,26 @@ async function verifySubmission(registry, commitment) {
   console.log('\n✅ Verifying submission was recorded...');
   
   // Get batch count
-  const batchCount = await registry.batchCount();
+  const batchCount = await registry.getBatchCount();
   console.log(`   Total batches: ${batchCount}`);
   
   // Check recent batches for this commitment
-  const recentBatches = 5;
-  const startIndex = batchCount > recentBatches ? batchCount - recentBatches : 0n;
+  const recentBatches = 5n;
+  const batchCountBI = BigInt(batchCount.toString());
+  const startIndex = batchCountBI > recentBatches ? batchCountBI - recentBatches : 0n;
   
-  for (let i = startIndex; i < batchCount; i++) {
+  for (let i = startIndex; i < batchCountBI; i++) {
     const batch = await registry.batches(i);
     
-    // Check if this batch has our commitment
-    // Note: In production, we'd need a better way to query by commitment
-    console.log(`   Batch ${i}: ${batch.ipfsHash}`);
+    // PrivacyPreservingRegistry stores cidCommitment (keccak256(CID)) on-chain,
+    // not the CID string; log the fields that exist.
+    console.log(
+      `   Batch ${i.toString()}: ` +
+      `merkleRoot=${batch.merkleRoot} ` +
+      `cidCommitment=${batch.cidCommitment} ` +
+      `isPublic=${batch.isPublic} ` +
+      `contributorHash=${batch.contributorHash}`
+    );
   }
   
   console.log('\n✅ Submission verification complete');
@@ -225,6 +247,9 @@ async function main() {
   sampleIOCs.forEach((ioc, i) => {
     console.log(`   ${i + 1}. ${ioc}`);
   });
+
+  // Attach the IOCs to the proof object so submitWithProof can compute the IOC Merkle root.
+  proofData.iocs = sampleIOCs;
   
   try {
     // Load contract addresses
@@ -235,29 +260,38 @@ async function main() {
     
     const addresses = JSON.parse(fs.readFileSync(ADDRESSES_PATH, 'utf8'));
     const registryAddress = addresses.PrivacyPreservingRegistry;
-    const zkVerifierAddress = addresses.ZKVerifier;
-    
-    if (!zkVerifierAddress) {
-      console.error('❌ ZKVerifier address not found in addresses file');
-      console.log('Deploy ZKVerifier first:');
-      console.log('   npx hardhat run scripts/deploy-zkverifier.js --network arbitrumSepolia');
+    if (!registryAddress) {
+      console.error('❌ PrivacyPreservingRegistry address not found in addresses file');
       process.exit(1);
     }
     
-    console.log(`\n🌐 Network: ${hre.network.name}`);
-    console.log(`   Registry: ${registryAddress}`);
-    console.log(`   ZKVerifier: ${zkVerifierAddress}`);
+  // Connect to registry first so we can read the live zkVerifier address.
+  const registry = await ethers.getContractAt('PrivacyPreservingRegistry', registryAddress);
+  const zkVerifierAddress = await registry.zkVerifier();
+
+  console.log(`\n🌐 Network: ${hre.network.name}`);
+  console.log(`   Registry: ${registryAddress}`);
+  console.log(`   ZKVerifier: ${zkVerifierAddress}`);
+
+    // Fail-fast if we're accidentally connected to the local Hardhat network.
+    const net = await ethers.provider.getNetwork();
+    const expectedChainId = BigInt(addresses.chainId || 421614);
+    if (net.chainId !== expectedChainId) {
+      throw new Error(
+        `Connected to wrong chainId ${net.chainId.toString()} (expected ${expectedChainId.toString()}). ` +
+        `Make sure your RPC is reachable and Hardhat is actually using --network arbitrumSepolia.`
+      );
+    }
     
     // Get signers
     const [signer] = await ethers.getSigners();
     console.log(`\n👤 Submitter: ${signer.address}`);
     console.log('   (Identity hidden on-chain via zkSNARK)');
     
-    // Connect to contracts
-    const registry = await ethers.getContractAt('PrivacyPreservingRegistry', registryAddress);
-    const zkVerifier = await ethers.getContractAt('ZKVerifier', zkVerifierAddress);
+  // Connect to zkVerifier (as configured in the live registry)
+  const zkVerifier = await ethers.getContractAt('ZKVerifier', zkVerifierAddress);
     
-    // Step 1: Upload to IPFS
+  // Step 1: Upload to IPFS
     const ipfsHash = await uploadToIPFS(sampleIOCs);
     
     // Step 2: Submit with proof
@@ -274,7 +308,7 @@ async function main() {
     console.log(`   IOCs submitted: ${sampleIOCs.length}`);
     console.log(`   IPFS Hash: ${ipfsHash}`);
     console.log(`   Commitment: ${proofData.commitment.substring(0, 20)}...`);
-    console.log(`   Transaction: ${receipt.transactionHash}`);
+  console.log(`   Transaction: ${receipt.hash}`);
     console.log(`   Gas used: ${receipt.gasUsed.toString()}`);
     console.log(`   Block: ${receipt.blockNumber}`);
     
